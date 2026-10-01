@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
-import '../utils/memory_manager.dart';
+import '../utils/debouncer.dart';
 import 'tariff_service.dart';
 
 /// Service for managing the machines/circuits wired to the industrial

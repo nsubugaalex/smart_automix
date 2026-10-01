@@ -20,13 +20,18 @@ actual hardware side — no specific relay/firmware is wired up yet.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+```sh
+flutter pub get
+flutter run          # pick a device (Android, Windows, Chrome, ...)
+flutter test
+flutter analyze
+```
 
-A few resources to get you started if this is your first Flutter project:
+## Project layout
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- `lib/models/` — machine (`DeviceModel`) and alert models
+- `lib/services/` — `DeviceService`, `TariffService`, `AlertService`
+  (`ChangeNotifier` singletons, persisted with `shared_preferences`)
+- `lib/screens/` — `MainShell` with the Dashboard / Control / Energy /
+  Tariff tabs, plus Alerts, Settings and Add Machine
+- `lib/constants/uedcl_tariffs.dart` — tariff categories and placeholder rates

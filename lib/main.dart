@@ -4,10 +4,8 @@ import 'package:provider/provider.dart';
 
 import 'bloc/connectivity_bloc.dart';
 import 'services/alert_service.dart';
-import 'services/cache_service.dart';
 import 'services/device_service.dart';
 import 'services/tariff_service.dart';
-import 'utils/memory_manager.dart';
 import 'widgets/custom/uganda_theme.dart';
 
 // Import screens
@@ -15,7 +13,6 @@ import 'screens/main_shell.dart';
 import 'screens/notifications/alerts_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/devices/add_device_screen.dart';
-import 'screens/cache_test_screen.dart'; // ADDED
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,24 +24,6 @@ void main() async {
 }
 
 Future<void> _initializeServices() async {
-  // Initialize cache service (optional - app can work without it)
-  try {
-    await cacheService.init();
-  } catch (e, stackTrace) {
-    debugPrint('Cache service initialization failed: $e');
-    debugPrint('Stack trace: $stackTrace');
-    // Continue anyway - app can work without cache
-  }
-  
-  // Initialize memory manager (optional)
-  try {
-    await memoryManager.init();
-  } catch (e, stackTrace) {
-    debugPrint('Memory manager initialization failed: $e');
-    debugPrint('Stack trace: $stackTrace');
-    // Continue anyway
-  }
-  
   // Initialize device service (optional - will use empty list if fails)
   try {
     await deviceService.init();
@@ -92,11 +71,6 @@ class MyApp extends StatelessWidget {
         themeMode: ThemeMode.system,
         initialRoute: '/',
         onGenerateRoute: _generateRoute,
-        builder: (context, child) {
-          return _PerformanceOptimizer(
-            child: child ?? const SizedBox(),
-          );
-        },
       ),
     );
   }
@@ -112,8 +86,6 @@ class MyApp extends StatelessWidget {
         return _createRoute(const SettingsScreen());
       case '/add-device':
         return _createRoute(const AddDeviceScreen());
-      case '/cache-test':          // ADDED
-        return _createRoute(const CacheTestScreen());
       case '/about':
         return _createRoute(_buildAboutScreen());
       default:
@@ -166,54 +138,5 @@ class MyApp extends StatelessWidget {
       },
       transitionDuration: const Duration(milliseconds: 200),
     );
-  }
-}
-
-/// Performance optimizer widget that wraps the app
-class _PerformanceOptimizer extends StatefulWidget {
-  const _PerformanceOptimizer({required this.child}) : super(key: null);
-
-  final Widget child;
-
-  @override
-  State<_PerformanceOptimizer> createState() => _PerformanceOptimizerState();
-}
-
-class _PerformanceOptimizerState extends State<_PerformanceOptimizer> with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    switch (state) {
-      case AppLifecycleState.paused:
-        // App is in background - clear memory cache
-        cacheService.clearMemory();
-        break;
-      case AppLifecycleState.resumed:
-        // App is foreground - could reload critical data
-        break;
-      case AppLifecycleState.detached:
-        // App is being terminated - cleanup
-        cacheService.dispose();
-        memoryManager.dispose();
-        break;
-      default:
-        break;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return widget.child;
   }
 }
