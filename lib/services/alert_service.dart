@@ -16,9 +16,10 @@ import 'tariff_service.dart';
 /// system notifications are skipped (not just no-op'd) when running on web
 /// and the alert still lands in the in-app Alerts screen.
 class AlertService extends ChangeNotifier {
-  static final AlertService _instance = AlertService._internal();
-  factory AlertService() => _instance;
-  AlertService._internal();
+  AlertService(this._devices, this._tariff);
+
+  final DeviceService _devices;
+  final TariffService _tariff;
 
   static const _storageKey = 'alerts';
 
@@ -61,8 +62,8 @@ class AlertService extends ChangeNotifier {
 
     // Keep tariff-related alerts current as machines are toggled/added or
     // the tariff is edited, not just when the Tariff screen is saved.
-    deviceService.addListener(_recheckTariffHealth);
-    tariffService.addListener(_recheckTariffHealth);
+    _devices.addListener(_recheckTariffHealth);
+    _tariff.addListener(_recheckTariffHealth);
 
     notifyListeners();
   }
@@ -180,8 +181,8 @@ class AlertService extends ChangeNotifier {
 
   @override
   void dispose() {
-    deviceService.removeListener(_recheckTariffHealth);
-    tariffService.removeListener(_recheckTariffHealth);
+    _devices.removeListener(_recheckTariffHealth);
+    _tariff.removeListener(_recheckTariffHealth);
     super.dispose();
   }
 
@@ -189,8 +190,8 @@ class AlertService extends ChangeNotifier {
   /// corresponding alerts. Call this on app start and whenever the tariff
   /// or device list changes.
   Future<void> checkTariffHealth() async {
-    if (tariffService.isStale) {
-      final lastUpdated = tariffService.lastUpdated;
+    if (_tariff.isStale) {
+      final lastUpdated = _tariff.lastUpdated;
       final days = lastUpdated == null
           ? null
           : DateTime.now().difference(lastUpdated).inDays;
@@ -208,8 +209,8 @@ class AlertService extends ChangeNotifier {
       await resolve('tariff-stale');
     }
 
-    final threshold = tariffService.dailyCostAlertThreshold;
-    final dailyCost = deviceService.totalEstimatedDailyCostUgx;
+    final threshold = _tariff.dailyCostAlertThreshold;
+    final dailyCost = _devices.totalEstimatedDailyCostUgx;
     if (threshold != null && dailyCost > threshold) {
       await upsert(
         id: 'tariff-cost-threshold',
@@ -242,4 +243,4 @@ class AlertService extends ChangeNotifier {
   }
 }
 
-final alertService = AlertService();
+final alertService = AlertService(deviceService, tariffService);

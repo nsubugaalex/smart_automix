@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:smart_automix/main.dart';
+import 'package:smart_automix/services/device_service.dart';
 
 void main() {
   setUp(() {
@@ -9,6 +10,8 @@ void main() {
   });
 
   testWidgets('app starts on the dashboard with demo machines', (tester) async {
+    // main() loads machines before runApp; do the same here.
+    await deviceService.init();
     await tester.pumpWidget(const MyApp());
     await tester.pumpAndSettle();
 

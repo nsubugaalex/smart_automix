@@ -25,9 +25,10 @@ class EnergyMonitorBody extends StatelessWidget {
       builder: (context, _) {
         final devices = deviceService.devices;
         final totalWatts = deviceService.totalPowerConsumption;
-        final totalAmps = deviceService.totalCurrentDrawAmps;
+        final totalKva = deviceService.totalApparentPowerKva;
         final dailyKwh = deviceService.totalDailyEnergyKWh;
         final dailyCost = deviceService.totalEstimatedDailyCostUgx;
+        final monthlyCost = deviceService.totalEstimatedMonthlyCostUgx;
         final overloaded = deviceService.getOverloadedDevices();
 
         // A single lazily-built scroll view: the header/stats are one
@@ -65,8 +66,8 @@ class EnergyMonitorBody extends StatelessWidget {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _StatTile(
-                              label: 'Total Current',
-                              value: '${totalAmps.toStringAsFixed(1)} A',
+                              label: 'Running Load',
+                              value: '${totalKva.toStringAsFixed(1)} kVA',
                               icon: Icons.bolt,
                               color: UgandaTheme.warning,
                             ),
@@ -74,11 +75,26 @@ class EnergyMonitorBody extends StatelessWidget {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      _StatTile(
-                        label: 'Est. Daily Cost',
-                        value: UgandaTheme.formatUgx(dailyCost),
-                        icon: Icons.receipt_long,
-                        color: UgandaTheme.red,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _StatTile(
+                              label: 'Est. Daily Cost',
+                              value: UgandaTheme.formatUgx(dailyCost),
+                              icon: Icons.receipt_long,
+                              color: UgandaTheme.red,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _StatTile(
+                              label: 'Est. Monthly Bill',
+                              value: UgandaTheme.formatUgx(monthlyCost),
+                              icon: Icons.calendar_month,
+                              color: UgandaTheme.red,
+                            ),
+                          ),
+                        ],
                       ),
                       if (overloaded.isNotEmpty) ...[
                         const SizedBox(height: 12),
@@ -89,7 +105,8 @@ class EnergyMonitorBody extends StatelessWidget {
                             child: Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(Icons.warning_amber, color: UgandaTheme.danger),
+                                const Icon(Icons.warning_amber,
+                                    color: UgandaTheme.danger),
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
@@ -112,14 +129,17 @@ class EnergyMonitorBody extends StatelessWidget {
                           padding: const EdgeInsets.all(16),
                           child: Row(
                             children: [
-                              const Icon(Icons.info_outline, size: 20, color: Colors.grey),
+                              const Icon(Icons.info_outline,
+                                  size: 20, color: Colors.grey),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   'Billed as ${tariffService.category.label} at '
                                   '${UgandaTheme.formatUgx(tariffService.ratePerKwh)}/kWh. '
-                                  'Update this in Settings > Tariff to match your current '
-                                  'UEDCL bill.',
+                                  'Costs assume each machine runs its configured hours '
+                                  'per day; the monthly bill adds your fixed charge over '
+                                  '${TariffService.daysPerMonth} days. Update the rate in '
+                                  'the Tariff tab to match your current UEDCL bill.',
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
                               ),
@@ -180,7 +200,8 @@ class _MachineLoadTile extends StatelessWidget {
             Flexible(child: Text(device.name)),
             if (overloaded) ...[
               const SizedBox(width: 6),
-              const Icon(Icons.warning_amber, color: UgandaTheme.danger, size: 18),
+              const Icon(Icons.warning_amber,
+                  color: UgandaTheme.danger, size: 18),
             ],
           ],
         ),
@@ -196,7 +217,8 @@ class _MachineLoadTile extends StatelessWidget {
           children: [
             Text('${device.powerConsumption.toStringAsFixed(0)} W'),
             Text(
-              UgandaTheme.formatUgx(tariffService.costFor(device.dailyEnergyKWh())),
+              UgandaTheme.formatUgx(
+                  tariffService.costFor(device.dailyEnergyKWh())),
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

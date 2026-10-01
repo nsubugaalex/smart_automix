@@ -9,10 +9,9 @@ import 'tariff_service.dart';
 /// Service for managing the machines/circuits wired to the industrial
 /// switch panel: their on/off state, rated load, and remote control.
 class DeviceService extends ChangeNotifier {
-  static final DeviceService _instance = DeviceService._internal();
-  factory DeviceService() => _instance;
-  DeviceService._internal();
+  DeviceService(this._tariff);
 
+  final TariffService _tariff;
   final List<DeviceModel> _devices = [];
   bool _isLoading = false;
   String? _error;
@@ -48,9 +47,11 @@ class DeviceService extends ChangeNotifier {
         .fold(0.0, (sum, d) => sum + d.powerConsumption);
   }
 
-  /// Total current being drawn right now across all running machines
-  double get totalCurrentDrawAmps {
-    return _devices.fold(0.0, (sum, d) => sum + d.currentDrawAmps);
+  /// Total apparent power (kVA) being drawn right now across all running
+  /// machines. Used instead of summing amps, which isn't meaningful across
+  /// a mix of 230V single-phase and 415V three-phase machines.
+  double get totalApparentPowerKva {
+    return _devices.fold(0.0, (sum, d) => sum + d.currentApparentPowerKva);
   }
 
   /// Machines whose rated current exceeds their protective breaker
@@ -316,7 +317,8 @@ class DeviceService extends ChangeNotifier {
     return _devices.map((d) => d.type).toSet().toList();
   }
 
-  /// Calculate total daily energy consumption in kWh
+  /// Expected daily energy consumption in kWh across all machines, from
+  /// each machine's scheduled hours per day.
   double get totalDailyEnergyKWh {
     return _devices.fold(0.0, (sum, d) => sum + d.dailyEnergyKWh());
   }
@@ -324,19 +326,18 @@ class DeviceService extends ChangeNotifier {
   /// Calculate total estimated daily cost in UGX, using the facility's
   /// current UEDCL tariff rate.
   double get totalEstimatedDailyCostUgx {
-    return tariffService.costFor(totalDailyEnergyKWh);
+    return _tariff.costFor(totalDailyEnergyKWh);
+  }
+
+  /// Estimated monthly UEDCL bill in UGX, including the fixed charge.
+  double get totalEstimatedMonthlyCostUgx {
+    return _tariff.monthlyCostFor(totalDailyEnergyKWh);
   }
 
   /// Clear all devices (for testing or reset)
   Future<void> clearAllDevices() async {
     _devices.clear();
     _scheduleSave();
-    notifyListeners();
-  }
-
-  /// Refresh devices (reload from storage)
-  Future<void> refresh() async {
-    await _loadDevices();
     notifyListeners();
   }
 
@@ -348,4 +349,4 @@ class DeviceService extends ChangeNotifier {
 }
 
 // Export singleton instance
-final deviceService = DeviceService();
+final deviceService = DeviceService(tariffService);

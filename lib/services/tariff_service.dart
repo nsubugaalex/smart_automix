@@ -8,9 +8,6 @@ import '../constants/uedcl_tariffs.dart';
 /// The rate is user-editable because ERA/UEDCL tariffs change quarterly and
 /// this app has no live feed into UEDCL's billing systems.
 class TariffService extends ChangeNotifier {
-  static final TariffService _instance = TariffService._internal();
-  factory TariffService() => _instance;
-  TariffService._internal();
 
   static const _categoryKey = 'tariff_category';
   static const _rateKey = 'tariff_rate_ugx_per_kwh';
@@ -22,6 +19,9 @@ class TariffService extends ChangeNotifier {
   /// user hasn't touched in longer than this is worth flagging as possibly
   /// outdated.
   static const staleAfter = Duration(days: 90);
+
+  /// Billing days per month used for monthly estimates.
+  static const daysPerMonth = 30;
 
   UedclTariffCategory _category = UedclTariffCategory.smallIndustrial;
   double _ratePerKwh = UedclTariffCategory.smallIndustrial.defaultRatePerKwh;
@@ -54,35 +54,21 @@ class TariffService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Switch tariff category. Resets the rate to that category's default
-  /// unless [keepCustomRate] is true.
-  Future<void> setCategory(UedclTariffCategory category, {bool keepCustomRate = false}) async {
+  /// Save the tariff the user has confirmed against their current UEDCL
+  /// bill. This is the only way to mark the rate as confirmed (resetting
+  /// [isStale]) — browsing categories in the UI must not count as
+  /// confirming a placeholder default rate.
+  Future<void> confirmTariff({
+    required UedclTariffCategory category,
+    required double ratePerKwh,
+    required double monthlyFixedCharge,
+    double? dailyCostAlertThreshold,
+  }) async {
     _category = category;
-    if (!keepCustomRate) {
-      _ratePerKwh = category.defaultRatePerKwh;
-    }
+    _ratePerKwh = ratePerKwh;
+    _monthlyFixedCharge = monthlyFixedCharge;
+    _dailyCostAlertThreshold = dailyCostAlertThreshold;
     _lastUpdated = DateTime.now();
-    await _persist();
-    notifyListeners();
-  }
-
-  Future<void> setRatePerKwh(double rate) async {
-    _ratePerKwh = rate;
-    _lastUpdated = DateTime.now();
-    await _persist();
-    notifyListeners();
-  }
-
-  Future<void> setMonthlyFixedCharge(double charge) async {
-    _monthlyFixedCharge = charge;
-    await _persist();
-    notifyListeners();
-  }
-
-  /// Set (or clear, with null) the daily-cost level above which the user
-  /// wants to be alerted.
-  Future<void> setDailyCostAlertThreshold(double? threshold) async {
-    _dailyCostAlertThreshold = threshold;
     await _persist();
     notifyListeners();
   }
@@ -104,6 +90,11 @@ class TariffService extends ChangeNotifier {
 
   /// Estimate the UGX cost of consuming [kWh] of energy at the current rate.
   double costFor(double kWh) => kWh * _ratePerKwh;
+
+  /// Estimate a monthly UEDCL bill for a facility using [dailyKWh] per day:
+  /// energy over [daysPerMonth] days plus the monthly fixed charge.
+  double monthlyCostFor(double dailyKWh) =>
+      costFor(dailyKWh * daysPerMonth) + _monthlyFixedCharge;
 }
 
 final tariffService = TariffService();

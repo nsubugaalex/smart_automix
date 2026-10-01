@@ -8,19 +8,8 @@ import '../../widgets/custom/uganda_theme.dart';
 /// Facility dashboard: quick stats, running machines, and the full
 /// machine list. Body-only (no Scaffold/AppBar/Drawer) — hosted inside
 /// [MainShell], which owns the chrome shared across tabs.
-class DashboardBody extends StatefulWidget {
+class DashboardBody extends StatelessWidget {
   const DashboardBody({super.key});
-
-  @override
-  State<DashboardBody> createState() => _DashboardBodyState();
-}
-
-class _DashboardBodyState extends State<DashboardBody> {
-  @override
-  void initState() {
-    super.initState();
-    deviceService.init();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,60 +30,58 @@ class _DashboardBodyState extends State<DashboardBody> {
   Widget _buildBody(BuildContext context, DeviceService deviceService) {
     final allDevices = deviceService.devices;
 
-    return RefreshIndicator(
-      onRefresh: () => deviceService.refresh(),
-      child: ResponsivePage(
-        child: CustomScrollView(
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.all(16.0),
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildWelcomeSection(context, deviceService),
-                    const SizedBox(height: 24),
-                    _buildQuickStats(context, deviceService),
-                    const SizedBox(height: 24),
-                    _buildActiveDevicesSection(context, deviceService),
-                    const SizedBox(height: 24),
-                    Text(
-                      'All Machines',
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.bold,
-                          ),
-                    ),
-                    const SizedBox(height: 12),
-                    if (allDevices.isEmpty) const Text('No machines added yet'),
-                  ],
-                ),
+    return ResponsivePage(
+      child: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: const EdgeInsets.all(16.0),
+            sliver: SliverToBoxAdapter(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildWelcomeSection(context, deviceService),
+                  const SizedBox(height: 24),
+                  _buildQuickStats(context, deviceService),
+                  const SizedBox(height: 24),
+                  _buildActiveDevicesSection(context, deviceService),
+                  const SizedBox(height: 24),
+                  Text(
+                    'All Machines',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (allDevices.isEmpty) const Text('No machines added yet'),
+                ],
               ),
             ),
-            SliverPadding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              sliver: SliverList.builder(
-                itemCount: allDevices.length,
-                itemBuilder: (context, index) {
-                  final device = allDevices[index];
-                  return Padding(
-                    key: ValueKey(device.id),
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: DeviceCard(
-                      device: device,
-                      onToggle: (_) => deviceService.toggleDevice(device.id),
-                    ),
-                  );
-                },
-              ),
+          ),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            sliver: SliverList.builder(
+              itemCount: allDevices.length,
+              itemBuilder: (context, index) {
+                final device = allDevices[index];
+                return Padding(
+                  key: ValueKey(device.id),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: DeviceCard(
+                    device: device,
+                    onToggle: (_) => deviceService.toggleDevice(device.id),
+                  ),
+                );
+              },
             ),
-            const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
-          ],
-        ),
+          ),
+          const SliverPadding(padding: EdgeInsets.only(bottom: 16)),
+        ],
       ),
     );
   }
 
-  Widget _buildWelcomeSection(BuildContext context, DeviceService deviceService) {
+  Widget _buildWelcomeSection(
+      BuildContext context, DeviceService deviceService) {
     final activeCount = deviceService.getActiveDevices().length;
     final totalCount = deviceService.devices.length;
 
@@ -154,7 +141,8 @@ class _DashboardBodyState extends State<DashboardBody> {
                 context,
                 icon: Icons.flash_on,
                 color: UgandaTheme.warning,
-                value: '${deviceService.totalPowerConsumption.toStringAsFixed(0)}W',
+                value:
+                    '${deviceService.totalPowerConsumption.toStringAsFixed(0)}W',
                 label: 'Power Usage',
               ),
             ),
@@ -164,8 +152,9 @@ class _DashboardBodyState extends State<DashboardBody> {
                 context,
                 icon: Icons.bolt,
                 color: UgandaTheme.warning,
-                value: '${deviceService.totalCurrentDrawAmps.toStringAsFixed(1)}A',
-                label: 'Current Draw',
+                value:
+                    '${deviceService.totalApparentPowerKva.toStringAsFixed(1)} kVA',
+                label: 'Running Load',
               ),
             ),
           ],
@@ -178,7 +167,8 @@ class _DashboardBodyState extends State<DashboardBody> {
                 context,
                 icon: Icons.receipt_long,
                 color: UgandaTheme.red,
-                value: UgandaTheme.formatUgx(deviceService.totalEstimatedDailyCostUgx),
+                value: UgandaTheme.formatUgx(
+                    deviceService.totalEstimatedDailyCostUgx),
                 label: 'Est. Daily Cost',
               ),
             ),
@@ -186,8 +176,12 @@ class _DashboardBodyState extends State<DashboardBody> {
             Expanded(
               child: _buildStatCard(
                 context,
-                icon: overloadedCount > 0 ? Icons.warning_amber : Icons.check_circle,
-                color: overloadedCount > 0 ? UgandaTheme.danger : UgandaTheme.running,
+                icon: overloadedCount > 0
+                    ? Icons.warning_amber
+                    : Icons.check_circle,
+                color: overloadedCount > 0
+                    ? UgandaTheme.danger
+                    : UgandaTheme.running,
                 value: '$overloadedCount',
                 label: 'Overloaded',
               ),
@@ -232,7 +226,8 @@ class _DashboardBodyState extends State<DashboardBody> {
     );
   }
 
-  Widget _buildActiveDevicesSection(BuildContext context, DeviceService deviceService) {
+  Widget _buildActiveDevicesSection(
+      BuildContext context, DeviceService deviceService) {
     final activeDevices = deviceService.getActiveDevices();
 
     return Column(

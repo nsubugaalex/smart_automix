@@ -132,11 +132,23 @@ class DeviceModel {
   bool get isOverloaded =>
       breakerRatingAmps != null && ratedCurrentAmps > breakerRatingAmps!;
 
-  /// Calculate daily energy consumption in kWh, assuming [hoursPerDay] of
-  /// runtime. Defaults to this machine's own configured [hoursPerDay] —
-  /// override to model a hypothetical usage pattern.
+  /// Rated apparent power in kVA. Unlike amps, kVA can be summed across
+  /// single- and three-phase machines to get a facility-wide load figure.
+  double get apparentPowerKva {
+    if (powerConsumption <= 0 || powerFactor <= 0) return 0;
+    return powerConsumption / powerFactor / 1000;
+  }
+
+  /// Apparent power being drawn right now (0 if switched off).
+  double get currentApparentPowerKva => isOn ? apparentPowerKva : 0;
+
+  /// Expected daily energy consumption in kWh over [hoursPerDay] of runtime.
+  /// This is a planning estimate from the machine's schedule, so it does
+  /// not depend on whether the machine happens to be on right now.
+  /// Defaults to this machine's own configured [hoursPerDay] — override to
+  /// model a hypothetical usage pattern.
   double dailyEnergyKWh({double? hoursPerDay}) {
-    if (!isOn || powerConsumption == 0) return 0;
+    if (powerConsumption <= 0) return 0;
     return (powerConsumption * (hoursPerDay ?? this.hoursPerDay)) / 1000;
   }
 
