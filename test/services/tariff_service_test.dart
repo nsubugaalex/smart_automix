@@ -8,12 +8,14 @@ void main() {
     SharedPreferences.setMockInitialValues({});
   });
 
-  test('starts on the small-industrial default and is stale until confirmed', () async {
+  test('starts on the small-industrial default and is stale until confirmed',
+      () async {
     final tariff = TariffService();
     await tariff.init();
 
     expect(tariff.category, UedclTariffCategory.smallIndustrial);
-    expect(tariff.ratePerKwh, UedclTariffCategory.smallIndustrial.defaultRatePerKwh);
+    expect(tariff.ratePerKwh,
+        UedclTariffCategory.smallIndustrial.defaultRatePerKwh);
     expect(tariff.lastUpdated, isNull);
     expect(tariff.isStale, isTrue);
   });
@@ -81,7 +83,8 @@ void main() {
     expect(tariff.isStale, isFalse);
   });
 
-  test('costs use the rate, and the monthly bill adds the fixed charge', () async {
+  test('costs use the rate, and the monthly bill adds the fixed charge',
+      () async {
     final tariff = TariffService();
     await tariff.init();
     await tariff.confirmTariff(

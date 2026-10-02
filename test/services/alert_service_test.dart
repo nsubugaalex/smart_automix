@@ -37,7 +37,8 @@ void main() {
 
   Iterable<String> ids() => alerts.alerts.map((a) => a.id);
 
-  test('an unconfirmed tariff raises one stale alert, not duplicates', () async {
+  test('an unconfirmed tariff raises one stale alert, not duplicates',
+      () async {
     await alerts.checkTariffHealth();
     await alerts.checkTariffHealth();
 
@@ -57,7 +58,8 @@ void main() {
     expect(ids(), isNot(contains('tariff-stale')));
   });
 
-  test('cost threshold alert is raised above the limit and cleared below it', () async {
+  test('cost threshold alert is raised above the limit and cleared below it',
+      () async {
     // 1 kW x 10 h = 10 kWh/day x 500 = 5,000 UGX/day.
     await tariff.confirmTariff(
       category: UedclTariffCategory.smallIndustrial,

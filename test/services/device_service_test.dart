@@ -63,7 +63,8 @@ void main() {
     expect(devices.totalApparentPowerKva, closeTo(2.5, 1e-9));
   });
 
-  test('daily energy and cost follow schedules, not current on/off state', () async {
+  test('daily energy and cost follow schedules, not current on/off state',
+      () async {
     final (devices, _) = await _load();
 
     // 2 kW x 5 h + 7.5 kW x 2 h = 25 kWh, even though the mill is off.
@@ -99,7 +100,55 @@ void main() {
     expect(devices.getActiveDevices(), isEmpty);
     expect(devices.totalApparentPowerKva, 0);
 
-    await devices.turnOnAllDevices();
+    await devices.startAllStaggered(interval: Duration.zero);
     expect(devices.getActiveDevices(), hasLength(2));
+    expect(devices.isStartSequenceRunning, isFalse);
+  });
+
+  group('startAllStaggered', () {
+    const gap = Duration(milliseconds: 50);
+
+    test('starts the largest load first, then the rest after a gap', () async {
+      final (devices, _) = await _load();
+      await devices.turnOffAllDevices();
+
+      final sequence = devices.startAllStaggered(interval: gap);
+      await Future<void>.delayed(Duration.zero);
+
+      // Mill (7.5 kW) starts immediately; compressor (2 kW) is still waiting.
+      expect(devices.getDeviceById('b')!.isOn, isTrue);
+      expect(devices.getDeviceById('a')!.isOn, isFalse);
+      expect(devices.pendingStarts, 1);
+      expect(devices.isStartSequenceRunning, isTrue);
+
+      await sequence;
+      expect(devices.getDeviceById('a')!.isOn, isTrue);
+      expect(devices.isStartSequenceRunning, isFalse);
+    });
+
+    test('Cut All during a sequence cancels the remaining starts', () async {
+      final (devices, _) = await _load();
+      await devices.turnOffAllDevices();
+
+      final sequence = devices.startAllStaggered(interval: gap);
+      await Future<void>.delayed(Duration.zero);
+      await devices.turnOffAllDevices();
+      await sequence;
+
+      expect(devices.getActiveDevices(), isEmpty);
+      expect(devices.isStartSequenceRunning, isFalse);
+    });
+
+    test('cancelStartSequence keeps already-started machines on', () async {
+      final (devices, _) = await _load();
+      await devices.turnOffAllDevices();
+
+      final sequence = devices.startAllStaggered(interval: gap);
+      await Future<void>.delayed(Duration.zero);
+      devices.cancelStartSequence();
+      await sequence;
+
+      expect(devices.getActiveDevices().map((d) => d.id), ['b']);
+    });
   });
 }

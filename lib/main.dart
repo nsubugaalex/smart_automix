@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'bloc/connectivity_bloc.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/security_service.dart';
 import 'services/tariff_service.dart';
 import 'widgets/custom/uganda_theme.dart';
 
@@ -38,6 +39,15 @@ Future<void> _initializeServices() async {
     await tariffService.init();
   } catch (e, stackTrace) {
     debugPrint('Tariff service initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
+  // Load the operator PIN settings. If secure storage is unavailable the
+  // PIN stays off rather than locking the operator out of the panel.
+  try {
+    await securityService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Security service initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');
   }
 

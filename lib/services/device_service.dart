@@ -18,12 +18,26 @@ class DeviceService extends ChangeNotifier {
 
   // Coalesces rapid mutations (e.g. flipping several switches at once)
   // into a single SharedPreferences write instead of one write per change.
-  final Debouncer _saveDebouncer = Debouncer(delay: const Duration(milliseconds: 400));
+  final Debouncer _saveDebouncer =
+      Debouncer(delay: const Duration(milliseconds: 400));
+
+  /// Gap between machines during [startAllStaggered], so motor inrush
+  /// currents don't stack up and trip the main supply breaker.
+  static const startStagger = Duration(seconds: 5);
+
+  // Incremented to cancel an in-progress staggered start.
+  int _startSequenceId = 0;
+  int _pendingStarts = 0;
 
   // Getters
   List<DeviceModel> get devices => List.unmodifiable(_devices);
   bool get isLoading => _isLoading;
   String? get error => _error;
+
+  /// Machines still waiting to be switched on by [startAllStaggered]
+  /// (0 when no start sequence is running).
+  int get pendingStarts => _pendingStarts;
+  bool get isStartSequenceRunning => _pendingStarts > 0;
 
   /// Get devices filtered by location
   List<DeviceModel> getDevicesByLocation(String location) {
@@ -90,12 +104,14 @@ class DeviceService extends ChangeNotifier {
   Future<void> _loadDevices() async {
     final prefs = await SharedPreferences.getInstance();
     final devicesJson = prefs.getString('devices');
-    
+
     if (devicesJson != null) {
       final List<dynamic> decoded = jsonDecode(devicesJson);
       _devices.clear();
       _devices.addAll(
-        decoded.map((d) => DeviceModel.fromJson(d as Map<String, dynamic>)).toList(),
+        decoded
+            .map((d) => DeviceModel.fromJson(d as Map<String, dynamic>))
+            .toList(),
       );
     } else {
       // Load default devices for demo
@@ -260,26 +276,40 @@ class DeviceService extends ChangeNotifier {
     }
   }
 
-  /// Turn on all devices
-  Future<void> turnOnAllDevices() async {
-    for (final device in _devices) {
-      if (!device.isOn) {
-        final updatedDevice = device.copyWith(
-          isOn: true,
-          lastUsed: DateTime.now(),
-        );
-        final index = _devices.indexWhere((d) => d.id == device.id);
-        if (index != -1) {
-          _devices[index] = updatedDevice;
-        }
-      }
+  /// Switch on every stopped machine one at a time, largest load first,
+  /// waiting [interval] between machines. Starting everything at once
+  /// stacks the inrush currents of several motors and can trip the main
+  /// breaker. Cancelled by [cancelStartSequence] or [turnOffAllDevices].
+  Future<void> startAllStaggered({Duration interval = startStagger}) async {
+    final sequenceId = ++_startSequenceId;
+    final queue = _devices.where((d) => !d.isOn).toList()
+      ..sort((a, b) => b.powerConsumption.compareTo(a.powerConsumption));
+    if (queue.isEmpty) return;
+
+    _pendingStarts = queue.length;
+    notifyListeners();
+
+    for (var i = 0; i < queue.length; i++) {
+      if (i > 0) await Future<void>.delayed(interval);
+      if (sequenceId != _startSequenceId) return; // cancelled
+      _pendingStarts = queue.length - i - 1;
+      await turnOnDevice(queue[i].id);
     }
-    _scheduleSave();
+  }
+
+  /// Stop an in-progress [startAllStaggered]; machines already started
+  /// stay on.
+  void cancelStartSequence() {
+    if (_pendingStarts == 0) return;
+    _startSequenceId++;
+    _pendingStarts = 0;
     notifyListeners();
   }
 
-  /// Turn off all devices
+  /// Turn off all devices, cancelling any staggered start in progress.
   Future<void> turnOffAllDevices() async {
+    _startSequenceId++;
+    _pendingStarts = 0;
     for (final device in _devices) {
       if (device.isOn) {
         final updatedDevice = device.copyWith(
@@ -297,7 +327,8 @@ class DeviceService extends ChangeNotifier {
   }
 
   /// Update device settings
-  Future<void> updateDeviceSettings(String deviceId, Map<String, dynamic> settings) async {
+  Future<void> updateDeviceSettings(
+      String deviceId, Map<String, dynamic> settings) async {
     final device = getDeviceById(deviceId);
     if (device != null) {
       final updatedSettings = Map<String, dynamic>.from(device.settings ?? {})

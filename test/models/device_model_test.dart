@@ -28,14 +28,17 @@ DeviceModel machine({
 void main() {
   group('ratedCurrentAmps', () {
     test('single-phase is P / (V x pf)', () {
-      expect(machine(watts: 2300, voltage: 230, powerFactor: 1).ratedCurrentAmps,
+      expect(
+          machine(watts: 2300, voltage: 230, powerFactor: 1).ratedCurrentAmps,
           closeTo(10, 1e-9));
-      expect(machine(watts: 2300, voltage: 230, powerFactor: 0.5).ratedCurrentAmps,
+      expect(
+          machine(watts: 2300, voltage: 230, powerFactor: 0.5).ratedCurrentAmps,
           closeTo(20, 1e-9));
     });
 
     test('three-phase is P / (sqrt3 x V x pf)', () {
-      final m = machine(watts: 7500, phase: 'three', voltage: 415, powerFactor: 0.85);
+      final m =
+          machine(watts: 7500, phase: 'three', voltage: 415, powerFactor: 0.85);
       expect(m.ratedCurrentAmps, closeTo(7500 / (1.732 * 415 * 0.85), 1e-9));
     });
 
@@ -73,7 +76,8 @@ void main() {
 
   group('dailyEnergyKWh', () {
     test('is rated power x scheduled hours', () {
-      expect(machine(watts: 1500, hoursPerDay: 4).dailyEnergyKWh(), closeTo(6, 1e-9));
+      expect(machine(watts: 1500, hoursPerDay: 4).dailyEnergyKWh(),
+          closeTo(6, 1e-9));
     });
 
     test('does not depend on the current on/off state', () {
@@ -82,7 +86,8 @@ void main() {
     });
 
     test('can be overridden with hypothetical hours', () {
-      expect(machine(watts: 1000).dailyEnergyKWh(hoursPerDay: 10), closeTo(10, 1e-9));
+      expect(machine(watts: 1000).dailyEnergyKWh(hoursPerDay: 10),
+          closeTo(10, 1e-9));
     });
   });
 

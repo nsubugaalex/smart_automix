@@ -4,6 +4,7 @@ import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
+import 'control_actions.dart';
 
 /// Remote control panel for every machine/circuit wired to the switch
 /// panel: a master cut-off plus per-machine remote on/off control.
@@ -17,6 +18,7 @@ class ControlPanelBody extends StatelessWidget {
       builder: (context, deviceService, child) {
         final devices = deviceService.devices;
         final activeCount = deviceService.getActiveDevices().length;
+        final sequencing = deviceService.isStartSequenceRunning;
 
         return ResponsivePage(
           child: Column(
@@ -45,6 +47,12 @@ class ControlPanelBody extends StatelessWidget {
                                 '$activeCount of ${devices.length} machines running',
                                 style: const TextStyle(color: Colors.white70),
                               ),
+                              if (sequencing)
+                                Text(
+                                  'Starting… ${deviceService.pendingStarts} waiting',
+                                  style: const TextStyle(
+                                      color: UgandaTheme.yellow),
+                                ),
                             ],
                           ),
                         ),
@@ -53,9 +61,9 @@ class ControlPanelBody extends StatelessWidget {
                             backgroundColor: UgandaTheme.red,
                             foregroundColor: Colors.white,
                           ),
-                          onPressed: activeCount == 0
+                          onPressed: activeCount == 0 && !sequencing
                               ? null
-                              : () => deviceService.turnOffAllDevices(),
+                              : () => cutAllMachines(context),
                           icon: const Icon(Icons.power_settings_new),
                           label: const Text('Cut All'),
                         ),
@@ -65,11 +73,14 @@ class ControlPanelBody extends StatelessWidget {
                             foregroundColor: UgandaTheme.yellow,
                             side: const BorderSide(color: UgandaTheme.yellow),
                           ),
-                          onPressed: activeCount == devices.length
-                              ? null
-                              : () => deviceService.turnOnAllDevices(),
-                          icon: const Icon(Icons.play_arrow),
-                          label: const Text('Start All'),
+                          onPressed: sequencing
+                              ? deviceService.cancelStartSequence
+                              : activeCount == devices.length
+                                  ? null
+                                  : () => startAllMachines(context),
+                          icon:
+                              Icon(sequencing ? Icons.stop : Icons.play_arrow),
+                          label: Text(sequencing ? 'Stop Start' : 'Start All'),
                         ),
                       ],
                     ),
@@ -89,8 +100,7 @@ class ControlPanelBody extends StatelessWidget {
                             padding: const EdgeInsets.only(bottom: 8),
                             child: DeviceCard(
                               device: device,
-                              onToggle: (_) =>
-                                  deviceService.toggleDevice(device.id),
+                              onToggle: (_) => toggleMachine(context, device),
                             ),
                           );
                         },

@@ -4,6 +4,7 @@ import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
+import 'control_actions.dart';
 
 /// Facility dashboard: quick stats, running machines, and the full
 /// machine list. Body-only (no Scaffold/AppBar/Drawer) — hosted inside
@@ -68,7 +69,7 @@ class DashboardBody extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: DeviceCard(
                     device: device,
-                    onToggle: (_) => deviceService.toggleDevice(device.id),
+                    onToggle: (_) => toggleMachine(context, device),
                   ),
                 );
               },
@@ -244,7 +245,7 @@ class DashboardBody extends StatelessWidget {
             ),
             if (activeDevices.isNotEmpty)
               TextButton.icon(
-                onPressed: () => deviceService.turnOffAllDevices(),
+                onPressed: () => cutAllMachines(context),
                 icon: const Icon(Icons.power_off, size: 16),
                 label: const Text('Cut All'),
               ),
@@ -278,7 +279,7 @@ class DashboardBody extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: DeviceCard(
                       device: device,
-                      onToggle: (_) => deviceService.toggleDevice(device.id),
+                      onToggle: (_) => toggleMachine(context, device),
                     ),
                   ),
                 )
