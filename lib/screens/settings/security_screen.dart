@@ -67,7 +67,7 @@ class SecurityScreen extends StatelessWidget {
               ),
               const ListTile(
                 leading: Icon(Icons.info_outline),
-                subtitle: Text(
+                title: Text(
                   'Switching machines off never needs a PIN, so power can '
                   'always be cut in an emergency.',
                 ),

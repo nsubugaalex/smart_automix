@@ -29,10 +29,12 @@ TextField _pinField({
   required String label,
   String? errorText,
   bool autofocus = false,
+  FocusNode? focusNode,
   ValueChanged<String>? onSubmitted,
 }) {
   return TextField(
     controller: controller,
+    focusNode: focusNode,
     autofocus: autofocus,
     obscureText: true,
     keyboardType: TextInputType.number,
@@ -58,11 +60,13 @@ class _VerifyPinDialog extends StatefulWidget {
 
 class _VerifyPinDialogState extends State<_VerifyPinDialog> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   String? _error;
 
   @override
   void dispose() {
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 
@@ -80,6 +84,9 @@ class _VerifyPinDialogState extends State<_VerifyPinDialog> {
     }
 
     _controller.clear();
+    // Keep the field focused (and the keyboard up) so the operator can
+    // retype straight away, even after tapping the Unlock button.
+    _focusNode.requestFocus();
     final nowLocked = securityService.lockoutRemaining;
     setState(() => _error = nowLocked != null
         ? 'Too many wrong attempts. Locked for ${nowLocked.inSeconds + 1}s.'
@@ -95,6 +102,7 @@ class _VerifyPinDialogState extends State<_VerifyPinDialog> {
         label: 'PIN',
         errorText: _error,
         autofocus: true,
+        focusNode: _focusNode,
         onSubmitted: (_) => _submit(),
       ),
       actions: [

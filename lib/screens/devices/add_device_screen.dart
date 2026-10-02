@@ -249,7 +249,7 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
             ),
             const SizedBox(height: 16),
             Card(
-              color: overBreaker ? UgandaTheme.danger.withAlpha(25) : null,
+              color: overBreaker ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 25) : null,
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Row(

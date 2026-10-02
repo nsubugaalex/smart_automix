@@ -99,7 +99,9 @@ class EnergyMonitorBody extends StatelessWidget {
                       if (overloaded.isNotEmpty) ...[
                         const SizedBox(height: 12),
                         Card(
-                          color: UgandaTheme.danger.withAlpha(25),
+                          color: UgandaTheme.tintedCard(
+                              context, UgandaTheme.danger,
+                              alpha: 25),
                           child: Padding(
                             padding: const EdgeInsets.all(16),
                             child: Row(
@@ -189,7 +191,9 @@ class _MachineLoadTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final overloaded = device.isOn && device.isOverloaded;
     return Card(
-      color: overloaded ? UgandaTheme.danger.withAlpha(20) : null,
+      color: overloaded
+          ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 20)
+          : null,
       child: ListTile(
         leading: CircleAvatar(
           backgroundColor: device.isOn ? UgandaTheme.running : UgandaTheme.off,

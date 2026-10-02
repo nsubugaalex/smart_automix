@@ -49,6 +49,14 @@ class _TariffBodyState extends State<TariffBody> {
     super.dispose();
   }
 
+  /// "today", "yesterday" or "N days ago".
+  static String _ago(DateTime time) {
+    final days = DateTime.now().difference(time).inDays;
+    if (days == 0) return 'today';
+    if (days == 1) return 'yesterday';
+    return '$days days ago';
+  }
+
   static double? _parse(String text) => double.tryParse(text.trim());
 
   String? _validateRate(String? value) {
@@ -140,7 +148,10 @@ class _TariffBodyState extends State<TariffBody> {
                 ),
                 const SizedBox(height: 12),
                 Card(
-                  color: isStale ? UgandaTheme.danger.withAlpha(20) : null,
+                  color: isStale
+                      ? UgandaTheme.tintedCard(context, UgandaTheme.danger,
+                          alpha: 20)
+                      : null,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Row(
@@ -157,10 +168,9 @@ class _TariffBodyState extends State<TariffBody> {
                             lastUpdated == null
                                 ? 'Rate never confirmed — save below to confirm it.'
                                 : isStale
-                                    ? "Rate last confirmed ${DateTime.now().difference(lastUpdated).inDays} "
-                                        'days ago — likely outdated, please check your bill.'
-                                    : 'Rate confirmed ${DateTime.now().difference(lastUpdated).inDays} '
-                                        'day(s) ago.',
+                                    ? 'Rate last confirmed ${_ago(lastUpdated)} '
+                                        '— likely outdated, please check your bill.'
+                                    : 'Rate confirmed ${_ago(lastUpdated)}.',
                             style: TextStyle(
                               color: isStale ? UgandaTheme.danger : null,
                               fontWeight: isStale ? FontWeight.bold : null,

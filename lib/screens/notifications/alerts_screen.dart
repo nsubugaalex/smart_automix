@@ -111,7 +111,9 @@ class _AlertTile extends StatelessWidget {
       ),
       onDismissed: (_) => alertService.dismiss(alert.id),
       child: Card(
-        color: alert.read ? null : _color.withAlpha(15),
+        color: alert.read
+            ? null
+            : UgandaTheme.tintedCard(context, _color, alpha: 25),
         child: ListTile(
           onTap: () => alertService.markRead(alert.id),
           leading: Icon(_icon, color: _color),

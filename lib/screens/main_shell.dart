@@ -118,8 +118,8 @@ class _MainShellState extends State<MainShell> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.electrical_services, color: UgandaTheme.yellow, size: 48),
-                SizedBox(height: 16),
+                Icon(Icons.electrical_services, color: UgandaTheme.yellow, size: 36),
+                SizedBox(height: 8),
                 Text(
                   'SMART-AUTOMIX',
                   style: TextStyle(
@@ -131,7 +131,7 @@ class _MainShellState extends State<MainShell> {
                 SizedBox(height: 8),
                 Text(
                   'Industrial Switch & Electricity Management',
-                  style: TextStyle(color: Colors.white70, fontSize: 14),
+                  style: TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ],
             ),

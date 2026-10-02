@@ -21,7 +21,7 @@ class DeviceCard extends StatelessWidget {
     final overloaded = device.isOn && device.isOverloaded;
 
     return Card(
-      color: overloaded ? UgandaTheme.danger.withAlpha(20) : null,
+      color: overloaded ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 20) : null,
       child: ListTile(
         onTap: onTap,
         leading: CircleAvatar(

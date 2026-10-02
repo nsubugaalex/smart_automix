@@ -87,6 +87,17 @@ class UgandaTheme {
     );
   }
 
+  /// Opaque background for a status-tinted card: [color] at [alpha]
+  /// blended over the theme's card surface. Passing a translucent colour
+  /// straight to a Card lets its shadow show through, which renders as a
+  /// muddy grey instead of a light tint.
+  static Color tintedCard(BuildContext context, Color color, {int alpha = 25}) {
+    return Color.alphaBlend(
+      color.withAlpha(alpha),
+      Theme.of(context).colorScheme.surfaceContainerLow,
+    );
+  }
+
   static final NumberFormat _ugxFormat = NumberFormat.currency(
     locale: 'en_UG',
     symbol: 'UGX ',

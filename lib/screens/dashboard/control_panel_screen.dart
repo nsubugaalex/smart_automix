@@ -60,6 +60,8 @@ class ControlPanelBody extends StatelessWidget {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: UgandaTheme.red,
                             foregroundColor: Colors.white,
+                            disabledBackgroundColor: Colors.white12,
+                            disabledForegroundColor: Colors.white38,
                           ),
                           onPressed: activeCount == 0 && !sequencing
                               ? null
@@ -71,6 +73,7 @@ class ControlPanelBody extends StatelessWidget {
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: UgandaTheme.yellow,
+                            disabledForegroundColor: Colors.white38,
                             side: const BorderSide(color: UgandaTheme.yellow),
                           ),
                           onPressed: sequencing
