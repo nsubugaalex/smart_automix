@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -5,21 +6,28 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_model.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
+import 'panel/panel_link.dart';
+import 'panel/panel_settings.dart';
+import 'panel_service.dart';
 import 'tariff_service.dart';
 
 /// Notification centre for the app — currently used to keep the operator
 /// informed about the UEDCL tariff: a stale rate, a confirmed rate change,
 /// or the estimated daily cost crossing a threshold they set.
 ///
-/// On mobile/desktop this also raises a system notification via
-/// flutter_local_notifications; that plugin has no web implementation, so
-/// system notifications are skipped (not just no-op'd) when running on web
-/// and the alert still lands in the in-app Alerts screen.
+/// On Android/iOS/macOS this also raises a system notification via
+/// flutter_local_notifications. System notifications are skipped on web
+/// (they would need a browser permission prompt) and on platforms without
+/// notification settings configured; the alert still lands in the in-app
+/// Alerts screen everywhere.
 class AlertService extends ChangeNotifier {
-  AlertService(this._devices, this._tariff);
+  AlertService(this._devices, this._tariff, {PanelService? panel})
+      : _panel = panel;
 
   final DeviceService _devices;
   final TariffService _tariff;
+  final PanelService? _panel;
+  StreamSubscription<CommandFailure>? _failuresSub;
 
   static const _storageKey = 'alerts';
 
@@ -51,9 +59,18 @@ class AlertService extends ChangeNotifier {
         const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
         const iosSettings = DarwinInitializationSettings();
         await _notifications.initialize(
-          const InitializationSettings(android: androidSettings, iOS: iosSettings),
+          settings: const InitializationSettings(
+            android: androidSettings,
+            iOS: iosSettings,
+            macOS: iosSettings,
+          ),
         );
         _notificationsReady = true;
+        // Android 13+ requires asking before showing notifications.
+        await _notifications
+            .resolvePlatformSpecificImplementation<
+                AndroidFlutterLocalNotificationsPlugin>()
+            ?.requestNotificationsPermission();
       } catch (e, stackTrace) {
         debugPrint('Local notifications initialization failed: $e');
         debugPrint('Stack trace: $stackTrace');
@@ -64,6 +81,14 @@ class AlertService extends ChangeNotifier {
     // the tariff is edited, not just when the Tariff screen is saved.
     _devices.addListener(_recheckTariffHealth);
     _tariff.addListener(_recheckTariffHealth);
+    _panel?.addListener(_recheckPanelHealth);
+    _failuresSub ??= _devices.commandFailures.listen(
+      (failure) => add(
+        title: 'Command not confirmed: ${failure.machineName}',
+        message: failure.reason,
+        severity: AlertSeverity.warning,
+      ),
+    );
 
     notifyListeners();
   }
@@ -183,6 +208,8 @@ class AlertService extends ChangeNotifier {
   void dispose() {
     _devices.removeListener(_recheckTariffHealth);
     _tariff.removeListener(_recheckTariffHealth);
+    _panel?.removeListener(_recheckPanelHealth);
+    _failuresSub?.cancel();
     super.dispose();
   }
 
@@ -224,6 +251,39 @@ class AlertService extends ChangeNotifier {
     }
   }
 
+  void _recheckPanelHealth() {
+    checkPanelHealth();
+  }
+
+  /// Raise one alert while the configured MQTT panel can't be reached or
+  /// reports itself offline, and clear it once it's back. Simulation mode
+  /// and the initial "connecting" state raise nothing.
+  Future<void> checkPanelHealth() async {
+    final panel = _panel;
+    if (panel == null) return;
+    const id = 'panel-link';
+    final usingMqtt = panel.settings.mode == PanelMode.mqtt;
+    String? problem;
+    if (usingMqtt && panel.status == PanelLinkStatus.disconnected) {
+      problem = panel.lastError ?? 'Cannot reach the MQTT broker.';
+    } else if (usingMqtt &&
+        panel.status == PanelLinkStatus.connected &&
+        panel.panelOnline == false) {
+      problem = 'The switch panel controller is offline. Machines cannot be '
+          'switched remotely until it reconnects.';
+    }
+    if (problem == null) {
+      await resolve(id);
+    } else {
+      await upsert(
+        id: id,
+        title: 'Switch panel unreachable',
+        message: problem,
+        severity: AlertSeverity.critical,
+      );
+    }
+  }
+
   Future<void> _showSystemNotification(AlertModel alert) async {
     if (kIsWeb || !_notificationsReady) return;
     try {
@@ -235,7 +295,12 @@ class AlertService extends ChangeNotifier {
         priority: Priority.high,
       );
       const details = NotificationDetails(android: androidDetails);
-      await _notifications.show(alert.id.hashCode, alert.title, alert.message, details);
+      await _notifications.show(
+        id: alert.id.hashCode,
+        title: alert.title,
+        body: alert.message,
+        notificationDetails: details,
+      );
     } catch (e, stackTrace) {
       debugPrint('Failed to show local notification: $e');
       debugPrint('Stack trace: $stackTrace');
@@ -243,4 +308,5 @@ class AlertService extends ChangeNotifier {
   }
 }
 
-final alertService = AlertService(deviceService, tariffService);
+final alertService =
+    AlertService(deviceService, tariffService, panel: panelService);

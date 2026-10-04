@@ -1,8 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import '../bloc/connectivity_bloc.dart';
-import '../bloc/connectivity_state.dart';
 import '../services/alert_service.dart';
+import '../services/device_service.dart';
+import '../widgets/common/panel_status.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'dashboard/control_panel_screen.dart';
 import 'dashboard/energy_monitor_screen.dart';
@@ -23,6 +24,27 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _index = 0;
+  late final StreamSubscription<CommandFailure> _failuresSub;
+
+  @override
+  void initState() {
+    super.initState();
+    // Tell the operator straight away when a switch didn't take effect
+    // (the alert is also recorded in the Alerts screen).
+    _failuresSub = deviceService.commandFailures.listen((failure) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: UgandaTheme.danger,
+        content: Text('${failure.machineName}: ${failure.reason}'),
+      ));
+    });
+  }
+
+  @override
+  void dispose() {
+    _failuresSub.cancel();
+    super.dispose();
+  }
 
   static const _titles = [
     'SMART-AUTOMIX',
@@ -44,16 +66,8 @@ class _MainShellState extends State<MainShell> {
       appBar: AppBar(
         title: Text(_titles[_index]),
         actions: [
-          BlocBuilder<ConnectivityBloc, ConnectivityState>(
-            builder: (context, state) {
-              return Tooltip(
-                message: state.isConnected ? 'Connected' : 'Disconnected',
-                child: Icon(
-                  state.isConnected ? Icons.wifi : Icons.wifi_off,
-                  color: state.isConnected ? UgandaTheme.running : UgandaTheme.danger,
-                ),
-              );
-            },
+          PanelStatusIcon(
+            onTap: () => Navigator.pushNamed(context, '/network'),
           ),
           AnimatedBuilder(
             animation: alertService,
@@ -118,7 +132,8 @@ class _MainShellState extends State<MainShell> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.electrical_services, color: UgandaTheme.yellow, size: 36),
+                Icon(Icons.electrical_services,
+                    color: UgandaTheme.yellow, size: 36),
                 SizedBox(height: 8),
                 Text(
                   'SMART-AUTOMIX',

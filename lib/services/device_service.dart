@@ -4,14 +4,37 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../utils/debouncer.dart';
+import 'panel/panel_link.dart';
+import 'panel_service.dart';
 import 'tariff_service.dart';
+
+/// A switch command that didn't take effect.
+@immutable
+class CommandFailure {
+  const CommandFailure(this.machineName, this.reason);
+
+  final String machineName;
+  final String reason;
+}
 
 /// Service for managing the machines/circuits wired to the industrial
 /// switch panel: their on/off state, rated load, and remote control.
+///
+/// On/off commands go to the panel through [PanelService]; a machine's
+/// state only changes when the panel reports it, so the screen reflects
+/// what the hardware actually did.
 class DeviceService extends ChangeNotifier {
-  DeviceService(this._tariff);
+  DeviceService(
+    this._tariff, {
+    PanelService? panel,
+    this.confirmTimeout = defaultConfirmTimeout,
+  }) : _panel = panel ?? PanelService() {
+    _reportsSub = _panel.stateReports.listen(_onStateReport);
+  }
 
   final TariffService _tariff;
+  final PanelService _panel;
+  late final StreamSubscription<MachineStateReport> _reportsSub;
   final List<DeviceModel> _devices = [];
   bool _isLoading = false;
   String? _error;
@@ -29,6 +52,15 @@ class DeviceService extends ChangeNotifier {
   int _startSequenceId = 0;
   int _pendingStarts = 0;
 
+  /// How long to wait for the panel to confirm a command.
+  static const defaultConfirmTimeout = Duration(seconds: 5);
+  final Duration confirmTimeout;
+
+  // Machines with a command sent but not yet confirmed by the panel.
+  final Set<String> _awaitingConfirmation = {};
+  final Map<String, Timer> _confirmTimers = {};
+  final _failures = StreamController<CommandFailure>.broadcast();
+
   // Getters
   List<DeviceModel> get devices => List.unmodifiable(_devices);
   bool get isLoading => _isLoading;
@@ -38,6 +70,13 @@ class DeviceService extends ChangeNotifier {
   /// (0 when no start sequence is running).
   int get pendingStarts => _pendingStarts;
   bool get isStartSequenceRunning => _pendingStarts > 0;
+
+  /// Whether a command for [deviceId] is waiting for panel confirmation.
+  bool isAwaitingConfirmation(String deviceId) =>
+      _awaitingConfirmation.contains(deviceId);
+
+  /// Commands the panel refused, couldn't receive, or never confirmed.
+  Stream<CommandFailure> get commandFailures => _failures.stream;
 
   /// Get devices filtered by location
   List<DeviceModel> getDevicesByLocation(String location) {
@@ -106,7 +145,7 @@ class DeviceService extends ChangeNotifier {
     final devicesJson = prefs.getString('devices');
 
     if (devicesJson != null) {
-      final List<dynamic> decoded = jsonDecode(devicesJson);
+      final decoded = jsonDecode(devicesJson) as List<dynamic>;
       _devices.clear();
       _devices.addAll(
         decoded
@@ -243,36 +282,69 @@ class DeviceService extends ChangeNotifier {
   /// Toggle device power state
   Future<void> toggleDevice(String deviceId) async {
     final device = getDeviceById(deviceId);
-    if (device != null) {
-      final updatedDevice = device.copyWith(
-        isOn: !device.isOn,
-        lastUsed: device.isOn ? null : DateTime.now(),
-      );
-      await updateDevice(updatedDevice);
-    }
+    if (device != null) await _command(device, on: !device.isOn);
   }
 
   /// Turn on a device
   Future<void> turnOnDevice(String deviceId) async {
     final device = getDeviceById(deviceId);
-    if (device != null && !device.isOn) {
-      final updatedDevice = device.copyWith(
-        isOn: true,
-        lastUsed: DateTime.now(),
-      );
-      await updateDevice(updatedDevice);
-    }
+    if (device != null) await _command(device, on: true);
   }
 
   /// Turn off a device
   Future<void> turnOffDevice(String deviceId) async {
     final device = getDeviceById(deviceId);
-    if (device != null && device.isOn) {
-      final updatedDevice = device.copyWith(
-        isOn: false,
-        lastUsed: DateTime.now(),
-      );
-      await updateDevice(updatedDevice);
+    if (device != null) await _command(device, on: false);
+  }
+
+  /// Send an on/off command to the panel. The device's state changes in
+  /// [_onStateReport] once the panel confirms it — immediately in
+  /// simulation, or when the hardware reports back over MQTT.
+  Future<void> _command(DeviceModel device, {required bool on}) async {
+    final id = device.id;
+    if (device.isOn == on || _awaitingConfirmation.contains(id)) return;
+
+    _awaitingConfirmation.add(id);
+    notifyListeners();
+
+    final sent = await _panel.sendCommand(id, on: on);
+    if (!_awaitingConfirmation.contains(id)) return; // already confirmed
+
+    if (!sent) {
+      _clearAwaiting(id);
+      _failures.add(CommandFailure(device.name, 'Not connected to the switch panel.'));
+      return;
+    }
+    _confirmTimers[id] = Timer(confirmTimeout, () {
+      if (!_awaitingConfirmation.contains(id)) return;
+      _clearAwaiting(id);
+      _failures.add(CommandFailure(
+        device.name,
+        'The switch panel did not confirm the command within '
+        '${confirmTimeout.inSeconds}s. Check the machine on site.',
+      ));
+    });
+  }
+
+  void _clearAwaiting(String id) {
+    _awaitingConfirmation.remove(id);
+    _confirmTimers.remove(id)?.cancel();
+    notifyListeners();
+  }
+
+  void _onStateReport(MachineStateReport report) {
+    final index = _devices.indexWhere((d) => d.id == report.machineId);
+    if (index == -1) return;
+    final wasAwaiting = _awaitingConfirmation.remove(report.machineId);
+    _confirmTimers.remove(report.machineId)?.cancel();
+
+    final device = _devices[index];
+    if (device.isOn != report.isOn) {
+      _devices[index] = device.copyWith(isOn: report.isOn, lastUsed: DateTime.now());
+      _scheduleSave();
+      notifyListeners();
+    } else if (wasAwaiting) {
+      notifyListeners();
     }
   }
 
@@ -310,19 +382,8 @@ class DeviceService extends ChangeNotifier {
   Future<void> turnOffAllDevices() async {
     _startSequenceId++;
     _pendingStarts = 0;
-    for (final device in _devices) {
-      if (device.isOn) {
-        final updatedDevice = device.copyWith(
-          isOn: false,
-          lastUsed: DateTime.now(),
-        );
-        final index = _devices.indexWhere((d) => d.id == device.id);
-        if (index != -1) {
-          _devices[index] = updatedDevice;
-        }
-      }
-    }
-    _scheduleSave();
+    final running = _devices.where((d) => d.isOn).toList();
+    await Future.wait(running.map((d) => _command(d, on: false)));
     notifyListeners();
   }
 
@@ -374,10 +435,15 @@ class DeviceService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _reportsSub.cancel();
+    for (final timer in _confirmTimers.values) {
+      timer.cancel();
+    }
+    _failures.close();
     _saveDebouncer.dispose();
     super.dispose();
   }
 }
 
 // Export singleton instance
-final deviceService = DeviceService(tariffService);
+final deviceService = DeviceService(tariffService, panel: panelService);

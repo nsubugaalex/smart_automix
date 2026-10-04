@@ -10,10 +10,14 @@ class DeviceCard extends StatelessWidget {
     required this.device,
     required this.onToggle,
     this.onTap,
+    this.pending = false,
   });
 
   final DeviceModel device;
   final ValueChanged<bool> onToggle;
+
+  /// A command was sent and the panel hasn't confirmed it yet.
+  final bool pending;
   final VoidCallback? onTap;
 
   @override
@@ -21,7 +25,9 @@ class DeviceCard extends StatelessWidget {
     final overloaded = device.isOn && device.isOverloaded;
 
     return Card(
-      color: overloaded ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 20) : null,
+      color: overloaded
+          ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 20)
+          : null,
       child: ListTile(
         onTap: onTap,
         leading: CircleAvatar(
@@ -33,7 +39,8 @@ class DeviceCard extends StatelessWidget {
             Flexible(child: Text(device.name)),
             if (overloaded) ...[
               const SizedBox(width: 6),
-              const Icon(Icons.warning_amber, color: UgandaTheme.danger, size: 18),
+              const Icon(Icons.warning_amber,
+                  color: UgandaTheme.danger, size: 18),
             ],
           ],
         ),
@@ -42,10 +49,21 @@ class DeviceCard extends StatelessWidget {
           '${device.isOn ? ' • ${device.currentDrawAmps.toStringAsFixed(1)} A' : ''}',
           style: overloaded ? const TextStyle(color: UgandaTheme.danger) : null,
         ),
-        trailing: Switch(
-          value: device.isOn,
-          onChanged: onToggle,
-        ),
+        trailing: pending
+            ? const Tooltip(
+                message: 'Waiting for the panel to confirm',
+                child: Padding(
+                  padding: EdgeInsets.all(14),
+                  child: SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                ),
+              )
+            : Switch(
+                value: device.isOn,
+                onChanged: onToggle,
+              ),
       ),
     );
   }

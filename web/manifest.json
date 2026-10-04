@@ -1,11 +1,11 @@
 {
-    "name": "smart_automix",
-    "short_name": "smart_automix",
+    "name": "SMART-AUTOMIX",
+    "short_name": "AUTOMIX",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#000000",
+    "theme_color": "#000000",
+    "description": "Remote machine control and UEDCL electricity cost management for small-scale industrial switch panels.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

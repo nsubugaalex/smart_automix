@@ -1,6 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- MQTT connection to the switch panel broker (release builds need
+         this explicitly; debug builds get it from the debug manifest). -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- System notifications for alerts (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="smart_automix"
+        android:label="SMART-AUTOMIX"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

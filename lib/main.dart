@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:provider/provider.dart';
 
-import 'bloc/connectivity_bloc.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/panel_service.dart';
 import 'services/security_service.dart';
 import 'services/tariff_service.dart';
 import 'widgets/custom/uganda_theme.dart';
@@ -12,6 +11,7 @@ import 'widgets/custom/uganda_theme.dart';
 // Import screens
 import 'screens/main_shell.dart';
 import 'screens/notifications/alerts_screen.dart';
+import 'screens/settings/network_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/devices/add_device_screen.dart';
 
@@ -25,6 +25,15 @@ void main() async {
 }
 
 Future<void> _initializeServices() async {
+  // Load the switch-panel connection settings and start connecting in the
+  // background (simulation mode unless an MQTT broker is configured).
+  try {
+    await panelService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Panel service initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
   // Initialize device service (optional - will use empty list if fails)
   try {
     await deviceService.init();
@@ -71,7 +80,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: deviceService),
         ChangeNotifierProvider.value(value: tariffService),
         ChangeNotifierProvider.value(value: alertService),
-        BlocProvider(create: (_) => ConnectivityBloc()),
+        ChangeNotifierProvider.value(value: panelService),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -94,6 +103,8 @@ class MyApp extends StatelessWidget {
         return _createRoute(const AlertsScreen());
       case '/settings':
         return _createRoute(const SettingsScreen());
+      case '/network':
+        return _createRoute(const NetworkScreen());
       case '/add-device':
         return _createRoute(const AddDeviceScreen());
       case '/about':

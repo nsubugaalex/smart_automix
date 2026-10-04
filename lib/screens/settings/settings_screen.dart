@@ -18,7 +18,7 @@ class SettingsScreen extends StatelessWidget {
             subtitle: const Text('Switch panel connectivity'),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const NetworkScreen()),
+              MaterialPageRoute<void>(builder: (_) => const NetworkScreen()),
             ),
           ),
           ListTile(
@@ -27,7 +27,7 @@ class SettingsScreen extends StatelessWidget {
             subtitle: const Text('PIN, access control'),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const SecurityScreen()),
+              MaterialPageRoute<void>(builder: (_) => const SecurityScreen()),
             ),
           ),
           ListTile(
@@ -35,7 +35,7 @@ class SettingsScreen extends StatelessWidget {
             title: const Text('Profile'),
             onTap: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
             ),
           ),
         ],
