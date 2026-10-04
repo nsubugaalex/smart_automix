@@ -51,12 +51,14 @@ class AlertService extends ChangeNotifier {
       final decoded = jsonDecode(stored) as List<dynamic>;
       _alerts
         ..clear()
-        ..addAll(decoded.map((a) => AlertModel.fromJson(a as Map<String, dynamic>)));
+        ..addAll(
+            decoded.map((a) => AlertModel.fromJson(a as Map<String, dynamic>)));
     }
 
     if (!kIsWeb) {
       try {
-        const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+        const androidSettings =
+            AndroidInitializationSettings('@mipmap/ic_launcher');
         const iosSettings = DarwinInitializationSettings();
         await _notifications.initialize(
           settings: const InitializationSettings(
@@ -201,7 +203,8 @@ class AlertService extends ChangeNotifier {
 
   Future<void> _persist() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_storageKey, jsonEncode(_alerts.map((a) => a.toJson()).toList()));
+    await prefs.setString(
+        _storageKey, jsonEncode(_alerts.map((a) => a.toJson()).toList()));
   }
 
   @override
@@ -290,7 +293,8 @@ class AlertService extends ChangeNotifier {
       const androidDetails = AndroidNotificationDetails(
         'tariff_alerts',
         'Tariff Alerts',
-        channelDescription: 'Alerts about UEDCL tariff changes and cost thresholds',
+        channelDescription:
+            'Alerts about UEDCL tariff changes and cost thresholds',
         importance: Importance.high,
         priority: Priority.high,
       );

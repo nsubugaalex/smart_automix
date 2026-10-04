@@ -119,8 +119,9 @@ class DeviceModel {
   /// (independent of on/off state — this is a spec, not a live reading).
   double get ratedCurrentAmps {
     if (powerConsumption <= 0 || voltage <= 0 || powerFactor <= 0) return 0;
-    final divisor =
-        phase == 'three' ? (1.732 * voltage * powerFactor) : (voltage * powerFactor);
+    final divisor = phase == 'three'
+        ? (1.732 * voltage * powerFactor)
+        : (voltage * powerFactor);
     return powerConsumption / divisor;
   }
 

@@ -18,7 +18,8 @@ class ConsumptionGauge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ratio = maxWatts <= 0 ? 0.0 : (currentWatts / maxWatts).clamp(0.0, 1.0);
+    final ratio =
+        maxWatts <= 0 ? 0.0 : (currentWatts / maxWatts).clamp(0.0, 1.0);
     final isOverloaded = currentWatts > maxWatts && maxWatts > 0;
     final color = isOverloaded
         ? Colors.red

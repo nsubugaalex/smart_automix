@@ -32,9 +32,10 @@ Future<void> main(List<String> args) async {
   final options = _parseArgs(args);
   final panelId = options['panel'];
   if (panelId == null || !PanelTopics.isValidPanelId(panelId)) {
-    stderr.writeln('Usage: dart run tool/panel_simulator.dart --panel <panel-id> '
-        '[--host h] [--port p] [--tls] [--user u --password p] '
-        '[--delay-ms 300] [--ignore id1,id2]');
+    stderr
+        .writeln('Usage: dart run tool/panel_simulator.dart --panel <panel-id> '
+            '[--host h] [--port p] [--tls] [--user u --password p] '
+            '[--delay-ms 300] [--ignore id1,id2]');
     exitCode = 64;
     return;
   }
@@ -43,7 +44,8 @@ Future<void> main(List<String> args) async {
   final tls = options.containsKey('tls');
   final host = options['host'] ?? 'broker.emqx.io';
   final port = int.tryParse(options['port'] ?? '') ?? (tls ? 8883 : 1883);
-  final delay = Duration(milliseconds: int.tryParse(options['delay-ms'] ?? '') ?? 300);
+  final delay =
+      Duration(milliseconds: int.tryParse(options['delay-ms'] ?? '') ?? 300);
   final ignored = (options['ignore'] ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -102,7 +104,8 @@ Future<void> main(List<String> args) async {
       if (machineId == null || on == null) continue;
 
       if (ignored.contains(machineId)) {
-        _log('machine $machineId: $payload received — ignored (simulated fault)');
+        _log(
+            'machine $machineId: $payload received — ignored (simulated fault)');
         continue;
       }
       _log('machine $machineId: switching ${on ? 'ON' : 'OFF'}…');

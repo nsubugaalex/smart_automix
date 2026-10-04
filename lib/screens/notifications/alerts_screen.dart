@@ -119,10 +119,12 @@ class _AlertTile extends StatelessWidget {
           leading: Icon(_icon, color: _color),
           title: Text(
             alert.title,
-            style: TextStyle(fontWeight: alert.read ? FontWeight.normal : FontWeight.bold),
+            style: TextStyle(
+                fontWeight: alert.read ? FontWeight.normal : FontWeight.bold),
           ),
           subtitle: Text(alert.message),
-          trailing: Text(_relativeTime, style: Theme.of(context).textTheme.bodySmall),
+          trailing:
+              Text(_relativeTime, style: Theme.of(context).textTheme.bodySmall),
         ),
       ),
     );

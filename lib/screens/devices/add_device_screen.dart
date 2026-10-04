@@ -60,6 +60,12 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
     super.dispose();
   }
 
+  static String? _requiredNumber(String? value) {
+    if (value == null || value.trim().isEmpty) return 'Required';
+    if (double.tryParse(value.trim()) == null) return 'Enter a number';
+    return null;
+  }
+
   void _onPhaseChanged(String phase) {
     setState(() {
       _phase = phase;
@@ -101,189 +107,187 @@ class _AddDeviceScreenState extends State<AddDeviceScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Machine name',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<DeviceType>(
-              initialValue: _type,
-              decoration: const InputDecoration(
-                labelText: 'Machine type',
-                border: OutlineInputBorder(),
-              ),
-              items: DeviceType.values
-                  .map((t) => DropdownMenuItem(
-                        value: t,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(t.icon, size: 20),
-                            const SizedBox(width: 10),
-                            Text(t.value),
-                          ],
-                        ),
-                      ))
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _type = value);
-              },
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _locationController,
-              decoration: const InputDecoration(
-                labelText: 'Location / bay',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? 'Required' : null,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'Electrical specification',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _powerController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Rated power (watts)',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-                if (double.tryParse(value.trim()) == null) return 'Enter a number';
-                return null;
-              },
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _phase,
-                    decoration: const InputDecoration(
-                      labelText: 'Phase',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'single', child: Text('Single-phase')),
-                      DropdownMenuItem(value: 'three', child: Text('Three-phase')),
-                    ],
-                    onChanged: (value) {
-                      if (value != null) _onPhaseChanged(value);
-                    },
-                  ),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Machine name',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _voltageController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Voltage (V)',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) return 'Required';
-                      if (double.tryParse(value.trim()) == null) return 'Enter a number';
-                      return null;
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _powerFactorController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Power factor (0.1-1.0)',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (value) {
-                      final pf = double.tryParse(value?.trim() ?? '');
-                      if (pf == null || pf <= 0 || pf > 1) return '0.1 - 1.0';
-                      return null;
-                    },
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _breakerController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Breaker rating (A, optional)',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _hoursPerDayController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Expected runtime (hours/day)',
-                border: OutlineInputBorder(),
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? 'Required' : null,
               ),
-              validator: (value) {
-                if (value == null || value.trim().isEmpty) return 'Required';
-                if (double.tryParse(value.trim()) == null) return 'Enter a number';
-                return null;
-              },
-            ),
-            const SizedBox(height: 16),
-            Card(
-              color: overBreaker ? UgandaTheme.tintedCard(context, UgandaTheme.danger, alpha: 25) : null,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    Icon(
-                      overBreaker ? Icons.warning_amber : Icons.bolt,
-                      color: overBreaker
-                          ? UgandaTheme.danger
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
+              const SizedBox(height: 12),
+              DropdownButtonFormField<DeviceType>(
+                initialValue: _type,
+                decoration: const InputDecoration(
+                  labelText: 'Machine type',
+                  border: OutlineInputBorder(),
+                ),
+                items: DeviceType.values
+                    .map((t) => DropdownMenuItem(
+                          value: t,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(t.icon, size: 20),
+                              const SizedBox(width: 10),
+                              Text(t.value),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) setState(() => _type = value);
+                },
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _locationController,
+                decoration: const InputDecoration(
+                  labelText: 'Location / bay',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? 'Required' : null,
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Electrical specification',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        overBreaker
-                            ? 'Est. current ${current.toStringAsFixed(1)} A exceeds the '
-                              '${breaker.toStringAsFixed(0)} A breaker — it will likely trip.'
-                            : 'Est. current draw: ${current.toStringAsFixed(1)} A',
-                        style: TextStyle(
-                          color: overBreaker ? UgandaTheme.danger : null,
-                          fontWeight: overBreaker ? FontWeight.bold : null,
-                        ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _powerController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Rated power (watts)',
+                  border: OutlineInputBorder(),
+                ),
+                validator: _requiredNumber,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _phase,
+                      decoration: const InputDecoration(
+                        labelText: 'Phase',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'single', child: Text('Single-phase')),
+                        DropdownMenuItem(
+                            value: 'three', child: Text('Three-phase')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) _onPhaseChanged(value);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _voltageController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Voltage (V)',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: _requiredNumber,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _powerFactorController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Power factor (0.1-1.0)',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (value) {
+                        final pf = double.tryParse(value?.trim() ?? '');
+                        if (pf == null || pf <= 0 || pf > 1) return '0.1 - 1.0';
+                        return null;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _breakerController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Breaker rating (A, optional)',
+                        border: OutlineInputBorder(),
                       ),
                     ),
-                  ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _hoursPerDayController,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Expected runtime (hours/day)',
+                  border: OutlineInputBorder(),
+                ),
+                validator: _requiredNumber,
+              ),
+              const SizedBox(height: 16),
+              Card(
+                color: overBreaker
+                    ? UgandaTheme.tintedCard(context, UgandaTheme.danger,
+                        alpha: 25)
+                    : null,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Icon(
+                        overBreaker ? Icons.warning_amber : Icons.bolt,
+                        color: overBreaker
+                            ? UgandaTheme.danger
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          overBreaker
+                              ? 'Est. current ${current.toStringAsFixed(1)} A exceeds the '
+                                  '${breaker.toStringAsFixed(0)} A breaker — it will likely trip.'
+                              : 'Est. current draw: ${current.toStringAsFixed(1)} A',
+                          style: TextStyle(
+                            color: overBreaker ? UgandaTheme.danger : null,
+                            fontWeight: overBreaker ? FontWeight.bold : null,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: _submit,
-              icon: const Icon(Icons.add),
-              label: const Text('Add Machine'),
-            ),
-          ],
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: _submit,
+                icon: const Icon(Icons.add),
+                label: const Text('Add Machine'),
+              ),
+            ],
           ),
         ),
       ),

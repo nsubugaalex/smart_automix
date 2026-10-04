@@ -312,7 +312,8 @@ class DeviceService extends ChangeNotifier {
 
     if (!sent) {
       _clearAwaiting(id);
-      _failures.add(CommandFailure(device.name, 'Not connected to the switch panel.'));
+      _failures.add(
+          CommandFailure(device.name, 'Not connected to the switch panel.'));
       return;
     }
     _confirmTimers[id] = Timer(confirmTimeout, () {
@@ -340,7 +341,8 @@ class DeviceService extends ChangeNotifier {
 
     final device = _devices[index];
     if (device.isOn != report.isOn) {
-      _devices[index] = device.copyWith(isOn: report.isOn, lastUsed: DateTime.now());
+      _devices[index] =
+          device.copyWith(isOn: report.isOn, lastUsed: DateTime.now());
       _scheduleSave();
       notifyListeners();
     } else if (wasAwaiting) {

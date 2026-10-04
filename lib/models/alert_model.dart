@@ -55,7 +55,8 @@ class AlertModel {
         title: json['title'] as String,
         message: json['message'] as String,
         timestamp: DateTime.parse(json['timestamp'] as String),
-        severity: AlertSeverityX.fromName(json['severity'] as String? ?? 'info'),
+        severity:
+            AlertSeverityX.fromName(json['severity'] as String? ?? 'info'),
         read: json['read'] as bool? ?? false,
       );
 }

@@ -17,10 +17,10 @@ import 'screens/devices/add_device_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // Initialize services with error handling
   await _initializeServices();
-  
+
   runApp(const MyApp());
 }
 

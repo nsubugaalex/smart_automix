@@ -74,15 +74,19 @@ class UgandaTheme {
       ),
       cardTheme: CardThemeData(
         elevation: isDark ? 0 : 1,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radius)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(_radius)),
       ),
       inputDecorationTheme: InputDecorationTheme(
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(_radius)),
+        border:
+            OutlineInputBorder(borderRadius: BorderRadius.circular(_radius)),
         filled: true,
-        fillColor: isDark ? Colors.white.withAlpha(10) : Colors.black.withAlpha(5),
+        fillColor:
+            isDark ? Colors.white.withAlpha(10) : Colors.black.withAlpha(5),
       ),
       chipTheme: ChipThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radius)),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(_radius)),
       ),
     );
   }

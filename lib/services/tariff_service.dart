@@ -8,7 +8,6 @@ import '../constants/uedcl_tariffs.dart';
 /// The rate is user-editable because ERA/UEDCL tariffs change quarterly and
 /// this app has no live feed into UEDCL's billing systems.
 class TariffService extends ChangeNotifier {
-
   static const _categoryKey = 'tariff_category';
   static const _rateKey = 'tariff_rate_ugx_per_kwh';
   static const _fixedChargeKey = 'tariff_fixed_charge_ugx';
@@ -38,7 +37,8 @@ class TariffService extends ChangeNotifier {
   /// Whether the tariff rate hasn't been confirmed/updated within the last
   /// [staleAfter] window (or has never been set at all).
   bool get isStale =>
-      _lastUpdated == null || DateTime.now().difference(_lastUpdated!) > staleAfter;
+      _lastUpdated == null ||
+      DateTime.now().difference(_lastUpdated!) > staleAfter;
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
@@ -50,7 +50,8 @@ class TariffService extends ChangeNotifier {
     _monthlyFixedCharge = prefs.getDouble(_fixedChargeKey) ?? 0.0;
     _dailyCostAlertThreshold = prefs.getDouble(_costThresholdKey);
     final lastUpdatedIso = prefs.getString(_lastUpdatedKey);
-    _lastUpdated = lastUpdatedIso != null ? DateTime.tryParse(lastUpdatedIso) : null;
+    _lastUpdated =
+        lastUpdatedIso != null ? DateTime.tryParse(lastUpdatedIso) : null;
     notifyListeners();
   }
 
