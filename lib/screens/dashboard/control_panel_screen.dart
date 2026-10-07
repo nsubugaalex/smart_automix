@@ -108,6 +108,7 @@ class ControlPanelBody extends StatelessWidget {
                             padding: const EdgeInsets.only(bottom: 8),
                             child: DeviceCard(
                               device: device,
+                              load: deviceService.loadOf(device),
                               pending: deviceService
                                   .isAwaitingConfirmation(device.id),
                               onToggle: (_) => toggleMachine(context, device),

@@ -48,6 +48,37 @@ void main() {
       expect(() => PanelTopics('bad/id'), throwsArgumentError);
     });
 
+    test('builds the sensor topics', () {
+      expect(topics.power('7'), 'smartautomix/panel-test/machines/7/power');
+      expect(topics.meter, 'smartautomix/panel-test/meter');
+      expect(
+          topics.allMachinePower, 'smartautomix/panel-test/machines/+/power');
+    });
+
+    test('parses power and meter payloads, rejecting bad values', () {
+      expect(PanelTopics.parsePower('{"w": 7100, "a": 12.4}'),
+          (watts: 7100.0, amps: 12.4));
+      expect(PanelTopics.parseMeter('{"w": 0, "kwh": 48211.7}'),
+          (watts: 0.0, kwh: 48211.7));
+      for (final bad in [
+        '{"w": 7100}',
+        '{"w": -1, "a": 2}',
+        '{"w": "7100", "a": 2}',
+        '[1, 2]',
+        'ON',
+      ]) {
+        expect(PanelTopics.parsePower(bad), isNull, reason: bad);
+      }
+      expect(PanelTopics.parseMeter('{"w": 100}'), isNull);
+    });
+
+    test('encoded readings parse back', () {
+      final power = PanelTopics.encodePower(watts: 812.345, amps: 3.4567);
+      expect(PanelTopics.parsePower(power), (watts: 812.3, amps: 3.46));
+      final meter = PanelTopics.encodeMeter(watts: 950, kwh: 48210.12345);
+      expect(PanelTopics.parseMeter(meter), (watts: 950.0, kwh: 48210.123));
+    });
+
     test('parses ON/OFF case-insensitively', () {
       expect(PanelTopics.parseSwitch('ON'), isTrue);
       expect(PanelTopics.parseSwitch(' off '), isFalse);
@@ -55,11 +86,17 @@ void main() {
     });
   });
 
-  test('connecting subscribes to panel status and machine states', () async {
+  test('connecting subscribes to panel status, states and sensors', () async {
     await link.connect();
     expect(link.status, PanelLinkStatus.connected);
-    expect(transport.subscriptions,
-        containsAll([topics.status, topics.allMachineStates]));
+    expect(
+        transport.subscriptions,
+        containsAll([
+          topics.status,
+          topics.allMachineStates,
+          topics.allMachinePower,
+          topics.meter,
+        ]));
     expect(link.panelOnline, isNull); // until the panel reports in
   });
 
@@ -113,5 +150,23 @@ void main() {
 
     transport.setConnected(true);
     expect(link.status, PanelLinkStatus.connected);
+  });
+
+  test('power and meter messages become telemetry; bad ones are dropped',
+      () async {
+    await link.connect();
+    final readings = <String>[];
+    link.telemetry.listen((t) => readings.add(switch (t) {
+          MachinePowerReport() => '${t.machineId}:${t.watts}W/${t.amps}A',
+          MeterReport() => 'meter:${t.watts}W/${t.kwh}kWh',
+        }));
+
+    transport
+      ..deliver(topics.power('4'), '{"w": 6800, "a": 11.2}')
+      ..deliver(topics.power('5'), 'garbage')
+      ..deliver(topics.meter, '{"w": 9000, "kwh": 48211.5}');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(readings, ['4:6800.0W/11.2A', 'meter:9000.0W/48211.5kWh']);
   });
 }

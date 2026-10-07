@@ -27,6 +27,33 @@ class MachineStateReport {
   final bool isOn;
 }
 
+/// A measurement sent by the panel's sensors.
+sealed class PanelTelemetry {
+  const PanelTelemetry();
+}
+
+/// What one machine is drawing right now. [amps] is the line current
+/// (per phase on a three-phase machine).
+@immutable
+class MachinePowerReport extends PanelTelemetry {
+  const MachinePowerReport(this.machineId,
+      {required this.watts, required this.amps});
+
+  final String machineId;
+  final double watts;
+  final double amps;
+}
+
+/// The panel's supply meter: total real power through the main incomer,
+/// and the meter's cumulative energy register.
+@immutable
+class MeterReport extends PanelTelemetry {
+  const MeterReport({required this.watts, required this.kwh});
+
+  final double watts;
+  final double kwh;
+}
+
 /// The connection between the app and the switch panel.
 ///
 /// Commands go out through [sendCommand]; the resulting machine state comes
@@ -43,6 +70,9 @@ abstract class PanelLink extends ChangeNotifier {
   String? get lastError;
 
   Stream<MachineStateReport> get stateReports;
+
+  /// Power and energy readings, if the panel has sensors fitted.
+  Stream<PanelTelemetry> get telemetry;
 
   bool get canSendCommands =>
       status == PanelLinkStatus.simulated ||
@@ -72,6 +102,10 @@ class SimulatedPanelLink extends PanelLink {
 
   @override
   Stream<MachineStateReport> get stateReports => _reports.stream;
+
+  /// No sensors in simulation: the app falls back to nameplate estimates.
+  @override
+  Stream<PanelTelemetry> get telemetry => const Stream.empty();
 
   @override
   Future<void> connect() async {}

@@ -12,8 +12,9 @@ typedef PanelLinkFactory = PanelLink Function(PanelSettings settings);
 
 /// Owns the app's connection to the switch panel: loads the connection
 /// settings, keeps the active [PanelLink] (simulated or MQTT) and swaps it
-/// when the settings change. Machine state reports from whichever link is
-/// active are re-published on [stateReports].
+/// when the settings change. Machine state reports and sensor readings from
+/// whichever link is active are re-published on [stateReports] and
+/// [telemetry].
 class PanelService extends ChangeNotifier {
   PanelService({
     PanelSettingsStore store = const PanelSettingsStore(),
@@ -27,10 +28,12 @@ class PanelService extends ChangeNotifier {
   final PanelLinkFactory _linkFactory;
   // Synchronous so simulated switches apply before sendCommand returns.
   final _reports = StreamController<MachineStateReport>.broadcast(sync: true);
+  final _telemetry = StreamController<PanelTelemetry>.broadcast();
 
   PanelSettings _settings = const PanelSettings(panelId: 'panel-local');
   late PanelLink _link;
   StreamSubscription<MachineStateReport>? _linkReports;
+  StreamSubscription<PanelTelemetry>? _linkTelemetry;
 
   PanelSettings get settings => _settings;
   PanelLinkStatus get status => _link.status;
@@ -46,6 +49,7 @@ class PanelService extends ChangeNotifier {
       (_link.status == PanelLinkStatus.connected && _link.panelOnline == true);
 
   Stream<MachineStateReport> get stateReports => _reports.stream;
+  Stream<PanelTelemetry> get telemetry => _telemetry.stream;
 
   /// The default link for [settings]: simulation, or MQTT via the
   /// `mqtt_client` package.
@@ -82,6 +86,7 @@ class PanelService extends ChangeNotifier {
     final old = _link;
     old.removeListener(notifyListeners);
     _linkReports?.cancel();
+    _linkTelemetry?.cancel();
     old.dispose();
     _attach(link);
     notifyListeners();
@@ -93,14 +98,17 @@ class PanelService extends ChangeNotifier {
     _link = link;
     link.addListener(notifyListeners);
     _linkReports = link.stateReports.listen(_reports.add);
+    _linkTelemetry = link.telemetry.listen(_telemetry.add);
   }
 
   @override
   void dispose() {
     _link.removeListener(notifyListeners);
     _linkReports?.cancel();
+    _linkTelemetry?.cancel();
     _link.dispose();
     _reports.close();
+    _telemetry.close();
     super.dispose();
   }
 }

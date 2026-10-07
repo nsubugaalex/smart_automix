@@ -23,8 +23,12 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/machines/<machine>/set` | app → panel | `ON` or `OFF` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/state` | panel → app | `ON` or `OFF` | 1 | **yes** |
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
+| `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
+| `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
 
-Payloads are plain text. `ON`/`OFF` are matched case-insensitively.
+`ON`/`OFF` payloads are plain text, matched case-insensitively. The `power`
+and `meter` topics are optional and only used if the panel has sensors
+(see [Power and energy readings](#power-and-energy-readings)).
 
 ## What the controller must do
 
@@ -47,10 +51,49 @@ Payloads are plain text. `ON`/`OFF` are matched case-insensitively.
 5. **Report local changes too.** If a machine is switched at the panel, or
    tripped by a breaker, publish its new state so the app stays correct.
 
+## Power and energy readings
+
+These topics are optional. Without them the app estimates the load from
+each machine's nameplate rating, and labels it as an estimate.
+
+- **`machines/<machine>/power`**: what one machine draws right now, from a
+  current sensor (CT clamp) or a meter module such as a PZEM-004T.
+  - `w`: real power in watts.
+  - `a`: line current in amps. On a three-phase machine, report the
+    current in one phase (or the average of the three), not the sum.
+- **`meter`**: the main supply, measured at the incomer.
+  - `w`: total real power in watts, including loads the app doesn't
+    switch.
+  - `kwh`: the meter's cumulative energy register. It only ever goes up,
+    except when the meter is replaced or reset.
+
+Both are JSON objects with numeric values of 0 or more. Messages with a
+missing, negative or non-numeric value are ignored.
+
+What the controller should do:
+
+1. **Publish every 5 seconds** while connected, with QoS 0 and **not
+   retained**. A retained reading would show an old value as if it were
+   live.
+2. **Report every machine that has a sensor, including machines that are
+   off** (`{"w": 0, "a": 0}`). This tells the app the sensor is working.
+3. **Publish a machine's reading straight after switching it**, so the
+   app doesn't keep showing the old value for up to 5 seconds.
+
+The app treats a reading as live for **30 seconds**. After that it goes
+back to estimating that machine, so a failed sensor never leaves a frozen
+value on screen. A machine measured drawing more current than its breaker
+rating raises an **Overcurrent** alert.
+
+The app counts today's energy as the increase in the `kwh` register since
+the first meter reading of the day. If the app was off at midnight, it
+counts from the first reading it gets, and shows when that was.
+
 ## What the app does
 
 - Subscribes to the panel's `status` topic and all `state` topics. Retained
-  messages give it the current state immediately on connecting.
+  messages give it the current state immediately on connecting. Also
+  subscribes to the `power` and `meter` topics.
 - Shows a machine as switched **only when its `state` report arrives**.
 - Shows the connection status in the app bar. It raises a critical alert
   when the broker is unreachable or the panel reports `offline`.
@@ -81,7 +124,15 @@ dart run tool/panel_simulator.dart --panel panel-3f9a1c2e
 
 # Simulate a relay that never responds (machine 5)
 dart run tool/panel_simulator.dart --panel panel-3f9a1c2e --ignore 5
+
+# Simulate a jammed mill motor drawing 3x its rated current (machine 4)
+dart run tool/panel_simulator.dart --panel panel-3f9a1c2e --overload 4
 ```
+
+The simulator publishes power and meter readings every 5 seconds, using
+the ratings of the app's demo machines plus about 5% random variation.
+Use `--interval-s` to change how often, or `--no-sensors` to try the app
+without readings.
 
 Stop it with Ctrl+C and it reports `offline`. If you kill it outright, the
 broker publishes its last will after about 30 seconds.

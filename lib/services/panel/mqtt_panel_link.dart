@@ -13,6 +13,7 @@ class MqttPanelLink extends PanelLink {
   final PanelTopics topics;
   final MqttTransport _transport;
   final _reports = StreamController<MachineStateReport>.broadcast();
+  final _telemetry = StreamController<PanelTelemetry>.broadcast();
   StreamSubscription<MqttTextMessage>? _messagesSub;
   StreamSubscription<bool>? _connectionSub;
 
@@ -32,6 +33,9 @@ class MqttPanelLink extends PanelLink {
 
   @override
   Stream<MachineStateReport> get stateReports => _reports.stream;
+
+  @override
+  Stream<PanelTelemetry> get telemetry => _telemetry.stream;
 
   @override
   Future<void> connect() async {
@@ -57,7 +61,9 @@ class MqttPanelLink extends PanelLink {
       // the app learns the panel's real state as soon as it connects.
       _transport
         ..subscribe(topics.status)
-        ..subscribe(topics.allMachineStates);
+        ..subscribe(topics.allMachineStates)
+        ..subscribe(topics.allMachinePower)
+        ..subscribe(topics.meter);
       _update(PanelLinkStatus.connected);
     } catch (e) {
       if (_disposed) return;
@@ -71,6 +77,22 @@ class MqttPanelLink extends PanelLink {
       if (online != _panelOnline) {
         _panelOnline = online;
         notifyListeners();
+      }
+      return;
+    }
+    if (message.topic == topics.meter) {
+      final meter = PanelTopics.parseMeter(message.payload);
+      if (meter != null) {
+        _telemetry.add(MeterReport(watts: meter.watts, kwh: meter.kwh));
+      }
+      return;
+    }
+    final powerId = topics.machineIdFrom(message.topic, suffix: 'power');
+    if (powerId != null) {
+      final power = PanelTopics.parsePower(message.payload);
+      if (power != null) {
+        _telemetry.add(
+            MachinePowerReport(powerId, watts: power.watts, amps: power.amps));
       }
       return;
     }
@@ -121,6 +143,7 @@ class MqttPanelLink extends PanelLink {
     _connectionSub?.cancel();
     _transport.disconnect();
     _reports.close();
+    _telemetry.close();
     super.dispose();
   }
 }

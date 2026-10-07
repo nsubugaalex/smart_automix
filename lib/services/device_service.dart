@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
+import '../models/machine_load.dart';
 import '../utils/debouncer.dart';
 import 'panel/panel_link.dart';
 import 'panel_service.dart';
+import 'power_monitor.dart';
 import 'tariff_service.dart';
 
 /// A switch command that didn't take effect.
@@ -17,23 +19,43 @@ class CommandFailure {
   final String reason;
 }
 
+/// How the load figures on screen were obtained.
+enum LoadSource {
+  /// From the supply meter, or every machine's sensor.
+  measured,
+
+  /// Some machines measured, the rest estimated from nameplate ratings.
+  partlyMeasured,
+
+  /// No sensor readings: estimated from nameplate ratings.
+  estimated,
+}
+
 /// Service for managing the machines/circuits wired to the industrial
-/// switch panel: their on/off state, rated load, and remote control.
+/// switch panel: their on/off state, load, and remote control.
 ///
 /// On/off commands go to the panel through [PanelService]; a machine's
 /// state only changes when the panel reports it, so the screen reflects
-/// what the hardware actually did.
+/// what the hardware actually did. Load figures use the panel's power
+/// readings ([PowerMonitor]) where available and nameplate estimates
+/// otherwise.
 class DeviceService extends ChangeNotifier {
   DeviceService(
     this._tariff, {
     PanelService? panel,
+    PowerMonitor? power,
     this.confirmTimeout = defaultConfirmTimeout,
-  }) : _panel = panel ?? PanelService() {
+  })  : _panel = panel ?? PanelService(),
+        _ownsPower = power == null {
+    _power = power ?? PowerMonitor(_panel.telemetry);
+    _power.addListener(notifyListeners);
     _reportsSub = _panel.stateReports.listen(_onStateReport);
   }
 
   final TariffService _tariff;
   final PanelService _panel;
+  late final PowerMonitor _power;
+  final bool _ownsPower;
   late final StreamSubscription<MachineStateReport> _reportsSub;
   final List<DeviceModel> _devices = [];
   bool _isLoading = false;
@@ -93,23 +115,70 @@ class DeviceService extends ChangeNotifier {
     return _devices.where((d) => d.isOn).toList();
   }
 
-  /// Get total power consumption of all active devices
+  /// What [device] is drawing: measured if the panel has a recent
+  /// reading for it, otherwise estimated from its ratings.
+  MachineLoad loadOf(DeviceModel device) {
+    final reading = _power.machine(device.id);
+    return reading == null
+        ? MachineLoad.estimated(device)
+        : MachineLoad.measured(device, reading);
+  }
+
+  /// Total real power (W) being drawn right now: the supply meter's reading
+  /// if there is one (it also covers loads the app doesn't control),
+  /// otherwise the sum over all machines.
   double get totalPowerConsumption {
-    return _devices
-        .where((d) => d.isOn)
-        .fold(0.0, (sum, d) => sum + d.powerConsumption);
+    return _power.meter?.watts ??
+        _devices.fold(0.0, (sum, d) => sum + loadOf(d).watts);
   }
 
   /// Total apparent power (kVA) being drawn right now across all running
   /// machines. Used instead of summing amps, which isn't meaningful across
   /// a mix of 230V single-phase and 415V three-phase machines.
   double get totalApparentPowerKva {
-    return _devices.fold(0.0, (sum, d) => sum + d.currentApparentPowerKva);
+    return _devices.fold(0.0, (sum, d) => sum + loadOf(d).kva);
   }
 
-  /// Machines whose rated current exceeds their protective breaker
+  /// Whether [totalPowerConsumption] and the per-machine figures are
+  /// measured or estimated.
+  LoadSource get loadSource {
+    if (_devices.isNotEmpty &&
+        _devices.every((d) => _power.machine(d.id) != null)) {
+      return LoadSource.measured;
+    }
+    return _power.hasReadings
+        ? LoadSource.partlyMeasured
+        : LoadSource.estimated;
+  }
+
+  /// Energy through the supply meter today (kWh), or null without a meter.
+  double? get meteredEnergyTodayKwh => _power.energyTodayKwh;
+
+  /// When [meteredEnergyTodayKwh] started counting (midnight, or when the
+  /// app first saw the meter today).
+  DateTime? get meteredEnergyTodaySince => _power.energyTodaySince;
+
+  /// Cost of [meteredEnergyTodayKwh] at the current tariff, in UGX.
+  double? get meteredCostTodayUgx {
+    final kwh = meteredEnergyTodayKwh;
+    return kwh == null ? null : _tariff.costFor(kwh);
+  }
+
+  /// Machines whose rated current exceeds their protective breaker, or
+  /// that the panel measures drawing more than it.
   List<DeviceModel> getOverloadedDevices() {
-    return _devices.where((d) => d.isOverloaded).toList();
+    return _devices
+        .where((d) => d.isOverloaded || loadOf(d).exceedsBreaker)
+        .toList();
+  }
+
+  /// Machines the panel measures drawing more current than their breaker
+  /// allows right now.
+  List<DeviceModel> getMeasuredOvercurrentDevices() {
+    return _devices.where((d) {
+      final load = loadOf(d);
+      return load.isMeasured && load.exceedsBreaker;
+    }).toList();
   }
 
   /// Get device by ID
@@ -128,6 +197,7 @@ class DeviceService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      await _power.init();
       await _loadDevices();
       _isLoading = false;
       notifyListeners();
@@ -438,6 +508,8 @@ class DeviceService extends ChangeNotifier {
   @override
   void dispose() {
     _reportsSub.cancel();
+    _power.removeListener(notifyListeners);
+    if (_ownsPower) _power.dispose();
     for (final timer in _confirmTimers.values) {
       timer.cancel();
     }

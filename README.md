@@ -28,6 +28,12 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
 - **Energy Monitor**: load gauge, running load (kVA), and per-machine
   current with breaker-overload warnings. Shows estimated daily and
   monthly cost in UGX.
+  - If the panel has current sensors or an energy meter, the app shows
+    **measured** values and today's metered energy and cost. It raises an
+    **Overcurrent** alert when a machine draws more than its breaker
+    allows.
+  - Without sensors, it estimates from each machine's nameplate rating
+    and labels the figures as estimates.
 - **UEDCL Tariff**: billing category and the rate from your current bill.
   You get a warning when the rate is over 90 days old (ERA adjusts tariffs
   quarterly), and an alert when the daily cost passes a limit you set.
@@ -64,8 +70,12 @@ topics, payloads and what the firmware must do are documented in
    is online. Switching a machine now goes through the broker to the
    simulator and back.
 
-Add `--ignore <machine-id>` to the simulator to see how the app handles a
-relay that never responds.
+The simulator also publishes power and meter readings, so the Energy
+Monitor shows measured values. Two options test failure handling:
+
+- `--ignore <machine-id>`: the relay never responds.
+- `--overload <machine-id>`: the machine draws 3× its rated current, which
+  raises an overcurrent alert.
 
 > The public test broker is open to everyone. Use it only for demos. Real
 > installations need their own broker with authentication and TLS (see

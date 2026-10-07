@@ -11,9 +11,10 @@ import 'panel/panel_settings.dart';
 import 'panel_service.dart';
 import 'tariff_service.dart';
 
-/// Notification centre for the app — currently used to keep the operator
-/// informed about the UEDCL tariff: a stale rate, a confirmed rate change,
-/// or the estimated daily cost crossing a threshold they set.
+/// Notification centre for the app: the UEDCL tariff (a stale rate, a
+/// confirmed rate change, or the estimated daily cost crossing a threshold
+/// they set), the switch-panel link, and machines measured drawing more
+/// current than their breaker allows.
 ///
 /// On Android/iOS/macOS this also raises a system notification via
 /// flutter_local_notifications. System notifications are skipped on web
@@ -28,6 +29,10 @@ class AlertService extends ChangeNotifier {
   final TariffService _tariff;
   final PanelService? _panel;
   StreamSubscription<CommandFailure>? _failuresSub;
+
+  // Machines currently measured over their breaker rating, so each
+  // overcurrent raises one alert rather than one per reading.
+  final Set<String> _overcurrent = {};
 
   static const _storageKey = 'alerts';
 
@@ -82,6 +87,7 @@ class AlertService extends ChangeNotifier {
     // Keep tariff-related alerts current as machines are toggled/added or
     // the tariff is edited, not just when the Tariff screen is saved.
     _devices.addListener(_recheckTariffHealth);
+    _devices.addListener(checkLoadHealth);
     _tariff.addListener(_recheckTariffHealth);
     _panel?.addListener(_recheckPanelHealth);
     _failuresSub ??= _devices.commandFailures.listen(
@@ -210,6 +216,7 @@ class AlertService extends ChangeNotifier {
   @override
   void dispose() {
     _devices.removeListener(_recheckTariffHealth);
+    _devices.removeListener(checkLoadHealth);
     _tariff.removeListener(_recheckTariffHealth);
     _panel?.removeListener(_recheckPanelHealth);
     _failuresSub?.cancel();
@@ -252,6 +259,30 @@ class AlertService extends ChangeNotifier {
     } else {
       await resolve('tariff-cost-threshold');
     }
+  }
+
+  /// Raise an alert when the panel measures a machine drawing more current
+  /// than its breaker allows: a jammed or overloaded motor, or a fault.
+  /// One alert per occurrence; it stays in the list after the load drops so
+  /// the operator can see it happened.
+  void checkLoadHealth() {
+    final over = _devices.getMeasuredOvercurrentDevices();
+    final overIds = over.map((d) => d.id).toSet();
+    for (final device in over) {
+      if (_overcurrent.contains(device.id)) continue;
+      final load = _devices.loadOf(device);
+      unawaited(add(
+        title: 'Overcurrent: ${device.name}',
+        message: '${device.name} is drawing '
+            '${load.amps.toStringAsFixed(1)} A on a '
+            '${device.breakerRatingAmps!.toStringAsFixed(0)} A breaker. '
+            'Check it for a jam or fault before the breaker trips.',
+        severity: AlertSeverity.critical,
+      ));
+    }
+    _overcurrent
+      ..clear()
+      ..addAll(overIds);
   }
 
   void _recheckPanelHealth() {

@@ -42,7 +42,8 @@ void main() {
                 name: 'Pump',
                 type: 'pump',
                 location: 'B',
-                powerConsumption: 1100)
+                powerConsumption: 1100,
+                breakerRatingAmps: 10)
             .toJson(),
       ]),
     });
@@ -122,6 +123,56 @@ void main() {
     );
   });
 
+  group('sensor readings', () {
+    Future<void> deliver(String topic, String payload) async {
+      transport.deliver(topic, payload);
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    test('measured machine readings replace nameplate estimates', () async {
+      await setUpPanel();
+      final mill = devices.getDeviceById('mill')!;
+      expect(devices.loadSource, LoadSource.estimated);
+      expect(devices.loadOf(mill).isMeasured, isFalse);
+      expect(devices.totalPowerConsumption, 7500);
+
+      await deliver(topics.power('mill'), '{"w": 6800, "a": 11}');
+      expect(devices.loadSource, LoadSource.partlyMeasured);
+      await deliver(topics.power('pump'), '{"w": 0, "a": 0}');
+      expect(devices.loadSource, LoadSource.measured);
+
+      final load = devices.loadOf(mill);
+      expect(load.isMeasured, isTrue);
+      expect(load.amps, 11);
+      expect(load.kva, closeTo(230 * 11 / 1000, 1e-9));
+      expect(devices.totalPowerConsumption, 6800);
+    });
+
+    test('the supply meter gives the total and the energy used today',
+        () async {
+      await setUpPanel();
+      await deliver(topics.meter, '{"w": 9100, "kwh": 48210}');
+      expect(devices.totalPowerConsumption, 9100,
+          reason: 'the meter also sees loads the app does not switch');
+      expect(devices.loadSource, LoadSource.partlyMeasured);
+
+      await deliver(topics.meter, '{"w": 9100, "kwh": 48212.5}');
+      expect(devices.meteredEnergyTodayKwh, closeTo(2.5, 1e-9));
+      expect(devices.meteredCostTodayUgx, greaterThan(0));
+    });
+
+    test('a measured current over the breaker rating counts as overloaded',
+        () async {
+      await setUpPanel();
+      expect(devices.getOverloadedDevices(), isEmpty);
+
+      await deliver(topics.power('pump'), '{"w": 3000, "a": 16.5}');
+      expect(
+          devices.getMeasuredOvercurrentDevices().map((d) => d.id), ['pump']);
+      expect(devices.getOverloadedDevices().map((d) => d.id), ['pump']);
+    });
+  });
+
   group('alerts', () {
     late AlertService alerts;
 
@@ -142,6 +193,22 @@ void main() {
       transport.deliver(topics.status, 'online');
       await Future<void>.delayed(Duration.zero);
       expect(titles(), isNot(contains('Switch panel unreachable')));
+    });
+
+    test('a measured overcurrent raises one alert per occurrence', () async {
+      Future<void> pumpAmps(double amps) async {
+        transport.deliver(topics.power('pump'), '{"w": 2000, "a": $amps}');
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      await pumpAmps(16);
+      await pumpAmps(17);
+      expect(titles().where((t) => t == 'Overcurrent: Pump'), hasLength(1));
+      expect(alerts.alerts.first.message, contains('16.0 A on a 10 A breaker'));
+
+      await pumpAmps(5);
+      await pumpAmps(15);
+      expect(titles().where((t) => t == 'Overcurrent: Pump'), hasLength(2));
     });
 
     test('an unconfirmed command is recorded as an alert', () async {
