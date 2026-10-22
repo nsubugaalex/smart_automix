@@ -77,6 +77,45 @@ void main() {
     expect(security.verifyPin('2468'), isTrue);
   });
 
+  test('restarting the app does not reset failed attempts or a lockout',
+      () async {
+    await (await load()).setPin('2468');
+
+    var security = await load();
+    for (var i = 0; i < SecurityService.maxFailedAttempts - 1; i++) {
+      expect(security.verifyPin('0000'), isFalse);
+    }
+    await pumpEventQueue(); // let the background save finish
+    security = await load();
+    expect(security.verifyPin('0000'), isFalse); // the 5th wrong guess
+    expect(security.lockoutRemaining, isNotNull);
+
+    await pumpEventQueue();
+    security = await load();
+    expect(security.lockoutRemaining, isNotNull);
+    expect(security.verifyPin('2468'), isFalse);
+  });
+
+  test('the PIN is stored as a salted hash, not in plain text', () async {
+    final security = await load();
+    await security.setPin('2468');
+
+    final stored = await const FlutterSecureStorage().readAll();
+    expect(stored.values.any((v) => v.contains('2468')), isFalse);
+    expect(stored['operator_pin_hash'], startsWith('pbkdf2-sha256\$'));
+  });
+
+  test('a plain-text PIN from an older version is migrated', () async {
+    FlutterSecureStorage.setMockInitialValues(
+        {'operator_pin': '1357', 'require_pin': 'true'});
+    final security = await load();
+
+    expect(security.requirePin, isTrue);
+    expect(security.verifyPin('1357'), isTrue);
+    final stored = await const FlutterSecureStorage().readAll();
+    expect(stored.containsKey('operator_pin'), isFalse);
+  });
+
   test('disabling the PIN forgets it and unlocks control', () async {
     final security = await load();
     await security.setPin('2468');
