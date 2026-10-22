@@ -32,6 +32,10 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
     **measured** values and today's metered energy and cost. It raises an
     **Overcurrent** alert when a machine draws more than its breaker
     allows.
+  - With a meter, the app keeps a **daily energy history**: a 30-day chart
+    of kWh and cost, the month-to-date total, and a table you can copy as
+    CSV to check against the UEDCL bill. Days the app didn't read the
+    meter all day are marked, since they may be missing some energy.
   - Without sensors, it estimates from each machine's nameplate rating
     and labels the figures as estimates.
 - **UEDCL Tariff**: billing category and the rate from your current bill.

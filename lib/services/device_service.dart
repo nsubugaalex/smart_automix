@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../models/machine_load.dart';
 import '../utils/debouncer.dart';
+import 'energy_log.dart';
 import 'panel/panel_link.dart';
 import 'panel_service.dart';
 import 'power_monitor.dart';
@@ -47,7 +48,8 @@ class DeviceService extends ChangeNotifier {
     this.confirmTimeout = defaultConfirmTimeout,
   })  : _panel = panel ?? PanelService(),
         _ownsPower = power == null {
-    _power = power ?? PowerMonitor(_panel.telemetry);
+    _power = power ??
+        PowerMonitor(_panel.telemetry, ratePerKwh: () => _tariff.ratePerKwh);
     _power.addListener(notifyListeners);
     _reportsSub = _panel.stateReports.listen(_onStateReport);
   }
@@ -157,6 +159,9 @@ class DeviceService extends ChangeNotifier {
   /// When [meteredEnergyTodayKwh] started counting (midnight, or when the
   /// app first saw the meter today).
   DateTime? get meteredEnergyTodaySince => _power.energyTodaySince;
+
+  /// Metered energy and cost per day, from the supply meter.
+  EnergyLog get energyHistory => _power.history;
 
   /// Cost of [meteredEnergyTodayKwh] at the current tariff, in UGX.
   double? get meteredCostTodayUgx {

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'energy_log.dart';
 import 'panel/panel_link.dart';
 
 /// A machine's measured draw, as last reported by the panel.
@@ -39,13 +40,16 @@ class MeterReading {
 ///
 /// Readings older than [maxAge] are dropped, so a sensor that stops
 /// reporting falls back to nameplate estimates instead of showing a frozen
-/// value. Also tracks today's metered energy from the meter's kWh register.
+/// value. Also keeps the day-by-day [history] of metered energy and cost
+/// from the meter's kWh register.
 class PowerMonitor extends ChangeNotifier {
   PowerMonitor(
     Stream<PanelTelemetry> telemetry, {
     this.maxAge = defaultMaxAge,
     DateTime Function()? clock,
-  }) : _now = clock ?? DateTime.now {
+    double Function()? ratePerKwh,
+  })  : _now = clock ?? DateTime.now,
+        _rate = ratePerKwh ?? (() => 0) {
     _sub = telemetry.listen(_onTelemetry);
   }
 
@@ -53,23 +57,30 @@ class PowerMonitor extends ChangeNotifier {
   /// before treating its readings as out of date.
   static const defaultMaxAge = Duration(seconds: 30);
 
-  static const _dayKey = 'meter_day';
-  static const _dayStartKwhKey = 'meter_day_start_kwh';
-  static const _dayStartAtKey = 'meter_day_start_at';
+  static const _historyKey = 'energy_history';
+
+  /// Readings arrive every few seconds; save the history at most this
+  /// often (and straight away when a new day starts).
+  static const saveInterval = Duration(minutes: 1);
+
+  // The format before the history: just today's starting register.
+  static const _legacyDayKey = 'meter_day';
+  static const _legacyDayStartKwhKey = 'meter_day_start_kwh';
+  static const _legacyDayStartAtKey = 'meter_day_start_at';
 
   final Duration maxAge;
   final DateTime Function() _now;
+  final double Function() _rate;
   late final StreamSubscription<PanelTelemetry> _sub;
   final Map<String, PowerReading> _machines = {};
   MeterReading? _meter;
   Timer? _expiryTimer;
 
-  // The meter register at the first reading of the day, so today's energy
-  // is the difference. If the app first sees the meter partway through the
-  // day, today's figure only counts from then ([energyTodaySince]).
-  String? _day;
-  double? _dayStartKwh;
-  DateTime? _dayStartAt;
+  EnergyLog _history = EnergyLog();
+  DateTime? _lastSave;
+
+  /// Metered energy and cost per day.
+  EnergyLog get history => _history;
 
   /// The latest reading for [machineId], or null if none is recent.
   PowerReading? machine(String machineId) {
@@ -85,34 +96,42 @@ class PowerMonitor extends ChangeNotifier {
 
   bool get hasReadings => meter != null || _machines.keys.any(_hasFresh);
 
-  /// Energy through the meter today, or null without a recent reading.
-  double? get energyTodayKwh {
+  /// Today's record, if the meter has a recent reading from today.
+  DailyEnergy? get _today {
     final reading = meter;
-    final start = _dayStartKwh;
-    if (reading == null || start == null || _day != _dayOf(reading.at)) {
-      return null;
-    }
-    return reading.kwh - start;
+    return reading == null ? null : _history.day(reading.at);
   }
 
+  /// Energy through the meter today. If the app first saw the meter partway
+  /// through the day, this only counts from then ([energyTodaySince]).
+  /// Null without a recent reading.
+  double? get energyTodayKwh => _today?.kwh;
+
   /// When [energyTodayKwh] started counting.
-  DateTime? get energyTodaySince => energyTodayKwh == null ? null : _dayStartAt;
+  DateTime? get energyTodaySince => _today?.firstAt;
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _day = prefs.getString(_dayKey);
-    _dayStartKwh = prefs.getDouble(_dayStartKwhKey);
-    final at = prefs.getString(_dayStartAtKey);
-    _dayStartAt = at == null ? null : DateTime.tryParse(at);
+    final saved = prefs.getString(_historyKey);
+    _history = saved == null ? EnergyLog() : EnergyLog.fromJson(saved);
+
+    final legacyStart = prefs.getDouble(_legacyDayStartKwhKey);
+    final legacyAt =
+        DateTime.tryParse(prefs.getString(_legacyDayStartAtKey) ?? '');
+    if (legacyStart != null && legacyAt != null) {
+      _history.seedDay(legacyAt, registerKwh: legacyStart);
+      await _save();
+    }
+    if (prefs.containsKey(_legacyDayKey)) {
+      await prefs.remove(_legacyDayKey);
+      await prefs.remove(_legacyDayStartKwhKey);
+      await prefs.remove(_legacyDayStartAtKey);
+    }
   }
 
   bool _hasFresh(String machineId) => machine(machineId) != null;
 
   bool _isFresh(DateTime at) => _now().difference(at) <= maxAge;
-
-  static String _dayOf(DateTime t) =>
-      '${t.year}-${t.month.toString().padLeft(2, '0')}-'
-      '${t.day.toString().padLeft(2, '0')}';
 
   void _onTelemetry(PanelTelemetry report) {
     final now = _now();
@@ -122,29 +141,25 @@ class PowerMonitor extends ChangeNotifier {
             PowerReading(watts: report.watts, amps: report.amps, at: now);
       case MeterReport():
         _meter = MeterReading(watts: report.watts, kwh: report.kwh, at: now);
-        _trackDay(report.kwh, now);
+        final newDay = _history.record(
+            registerKwh: report.kwh, at: now, ratePerKwh: _rate());
+        final last = _lastSave;
+        if (newDay || last == null || now.difference(last) >= saveInterval) {
+          _lastSave = now;
+          unawaited(_save());
+        }
     }
     _expiryTimer ??= Timer.periodic(maxAge ~/ 3, (_) => removeStale());
     notifyListeners();
   }
 
-  void _trackDay(double kwh, DateTime now) {
-    final today = _dayOf(now);
-    final start = _dayStartKwh;
-    // A new day, or the register went backwards (meter replaced or reset).
-    if (_day != today || start == null || kwh < start) {
-      _day = today;
-      _dayStartKwh = kwh;
-      _dayStartAt = now;
-      unawaited(_saveDay());
+  Future<void> _save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_historyKey, _history.toJson());
+    } catch (e) {
+      debugPrint('Could not save energy history: $e');
     }
-  }
-
-  Future<void> _saveDay() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_dayKey, _day!);
-    await prefs.setDouble(_dayStartKwhKey, _dayStartKwh!);
-    await prefs.setString(_dayStartAtKey, _dayStartAt!.toIso8601String());
   }
 
   /// Drop readings older than [maxAge] and tell listeners if any went.
@@ -164,6 +179,8 @@ class PowerMonitor extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Keep the readings since the last periodic save.
+    if (_lastSave != null) unawaited(_save());
     _sub.cancel();
     _expiryTimer?.cancel();
     super.dispose();

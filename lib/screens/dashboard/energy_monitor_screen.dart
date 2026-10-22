@@ -5,6 +5,7 @@ import '../../models/machine_load.dart';
 import '../../services/device_service.dart';
 import '../../services/tariff_service.dart';
 import '../../widgets/common/consumption_gauge.dart';
+import '../../widgets/common/energy_history_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
 
@@ -185,6 +186,8 @@ class EnergyMonitorBody extends StatelessWidget {
                           ),
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      EnergyHistoryCard(history: deviceService.energyHistory),
                       const SizedBox(height: 24),
                       Text(
                         'Load per machine',
