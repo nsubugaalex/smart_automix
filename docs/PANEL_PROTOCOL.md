@@ -1,7 +1,9 @@
 # Switch panel MQTT protocol
 
 This is the contract between the SMART-AUTOMIX app and a switch panel
-controller (for example an ESP32 driving relay/contactor boards). The app
+controller (for example an ESP32 driving relay/contactor boards; a
+reference implementation is in
+[`firmware/esp32-panel`](../firmware/esp32-panel/README.md)). The app
 and the controller never talk directly: both connect to the same MQTT
 broker. The topic names are defined in code in
 [`lib/services/panel/panel_topics.dart`](../lib/services/panel/panel_topics.dart).
@@ -108,10 +110,43 @@ counts from the first reading it gets, and shows when that was.
 - **Real installations:** run your own broker, for example Mosquitto on a
   Raspberry Pi or PC on the site network, or a hosted broker. Enable
   username/password authentication, and TLS whenever the broker is reachable
-  from the internet. Restrict each account with ACLs to its own
-  `smartautomix/<panel>/#` topics.
+  from the internet. Give the app and the panel separate accounts, and
+  restrict each with ACLs (see below).
+- **The operator PIN is checked only in the app.** Anyone with an account
+  that may publish to a `set` topic can switch machines on without it.
+  Only give app accounts to people trusted to run the machines.
 - The web version of the app can only use WebSockets. A page served over
   `https` can only connect with `wss://` (TLS).
+
+### Example Mosquitto ACLs
+
+For panel `panel-3f9a1c2e`, with accounts `site1-panel` (the controller)
+and `site1-app` (the app). Each account may only publish what its side of
+the protocol sends, so the app can't fake machine states and the panel
+can't issue commands:
+
+```text
+# /etc/mosquitto/acl  (set acl_file and password_file in mosquitto.conf)
+
+user site1-panel
+topic read  smartautomix/panel-3f9a1c2e/machines/+/set
+topic write smartautomix/panel-3f9a1c2e/machines/+/state
+topic write smartautomix/panel-3f9a1c2e/machines/+/power
+topic write smartautomix/panel-3f9a1c2e/meter
+# Also covers the last will
+topic write smartautomix/panel-3f9a1c2e/status
+
+user site1-app
+topic write smartautomix/panel-3f9a1c2e/machines/+/set
+topic read  smartautomix/panel-3f9a1c2e/machines/+/state
+topic read  smartautomix/panel-3f9a1c2e/machines/+/power
+topic read  smartautomix/panel-3f9a1c2e/meter
+topic read  smartautomix/panel-3f9a1c2e/status
+```
+
+Create the accounts with `mosquitto_passwd -c /etc/mosquitto/passwd
+site1-panel` and then `mosquitto_passwd /etc/mosquitto/passwd site1-app`.
+Mosquitto 2.x also needs `allow_anonymous false` and a `listener` line.
 
 ## Testing without hardware
 

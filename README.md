@@ -54,7 +54,9 @@ refresh the browser tab.
 
 The app and the panel controller connect to the same MQTT broker. The
 topics, payloads and what the firmware must do are documented in
-[docs/PANEL_PROTOCOL.md](docs/PANEL_PROTOCOL.md).
+[docs/PANEL_PROTOCOL.md](docs/PANEL_PROTOCOL.md). Reference ESP32 firmware
+(relays, contactor feedback, PZEM-004T power meters) is in
+[firmware/esp32-panel](firmware/esp32-panel/README.md).
 
 ### Try it without hardware
 

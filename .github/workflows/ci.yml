@@ -30,3 +30,24 @@ jobs:
 
       - name: Build web
         run: flutter build web --release
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: platformio-${{ hashFiles('firmware/esp32-panel/platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      # Builds with panel_config.example.h (no secrets in the repository).
+      - name: Build ESP32 firmware
+        run: pio run -d firmware/esp32-panel
