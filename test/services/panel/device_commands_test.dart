@@ -215,7 +215,12 @@ void main() {
 
     test('an unconfirmed command is recorded as an alert', () async {
       await devices.turnOnDevice('pump');
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      // Wait for the 50 ms confirm timeout; allow for a busy test machine.
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!titles().contains('Command not confirmed: Pump') &&
+          DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
       expect(titles(), contains('Command not confirmed: Pump'));
     });
   });
