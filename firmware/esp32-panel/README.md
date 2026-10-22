@@ -141,6 +141,12 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Daily energy:** with a supply meter, the controller totals each
+  day's energy (local time, `TIMEZONE`) and publishes it, retained, to
+  `energy/<date>`, so the app's history covers days it wasn't open. The
+  running total is saved to flash every 10 minutes and survives a
+  restart. It needs the clock from NTP, like the late-command check.
+  The broker keeps `ENERGY_KEEP_DAYS` (400) days.
 - **Late commands:** an `ON` that arrives more than 10 s after the app
   sent it (`CMD_MAX_AGE_MS`) is ignored, and the app reports that the panel
   didn't confirm. `OFF` always runs. This needs the clock set over NTP

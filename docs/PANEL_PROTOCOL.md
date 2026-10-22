@@ -27,6 +27,7 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
 | `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
+| `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": 1792616405, "last": 1792702795}` | 1 | **yes** |
 
 `state` and `status` payloads are plain text, matched case-insensitively.
 A command's `cmd` is `ON` or `OFF`, and `ts` is when the app sent it, in
@@ -96,9 +97,34 @@ back to estimating that machine, so a failed sensor never leaves a frozen
 value on screen. A machine measured drawing more current than its breaker
 rating raises an **Overcurrent** alert.
 
-The app counts today's energy as the increase in the `kwh` register since
-the first meter reading of the day. If the app was off at midnight, it
-counts from the first reading it gets, and shows when that was.
+The app also counts each day's energy itself, from the `kwh` register,
+but only while it's open. If the app was closed at midnight, today only
+counts from the first reading it gets, and the app shows when that was.
+
+### Daily energy totals
+
+The controller is always on, so it should keep the daily totals. Then the
+app's history is complete even for days nobody had it open.
+
+- **`energy/<YYYY-MM-DD>`**: one message per local calendar day, **retained**
+  so the app gets the whole history when it connects.
+  - `kwh`: energy that day: the sum of the register's increases between
+    readings. A register that goes backwards (meter replaced) adds nothing.
+  - `reg`: the register at the last reading. The app's live readings
+    carry on from this value, so nothing is counted twice.
+  - `first`, `last`: the first and last reading of the day, in seconds
+    since 1970. The app marks a day incomplete unless they are within 15
+    minutes of its midnights.
+- Publish today's message about once a minute, and the finished day once
+  more just after midnight (on reconnecting, if the controller was offline
+  then).
+- Keep the running total in non-volatile memory, so a restart doesn't lose
+  the day.
+- To keep the broker tidy, delete days older than the history you keep by
+  publishing an empty retained message to their topic.
+
+The app uses the panel's total for a day unless it counted more itself
+(for example, a new controller that started partway through the day).
 
 ## What the app does
 
@@ -175,7 +201,10 @@ dart run tool/panel_simulator.dart --panel panel-3f9a1c2e --overload 4
 
 The simulator publishes power and meter readings every 5 seconds, using
 the ratings of the app's demo machines plus about 5% random variation.
-Use `--interval-s` to change how often, or `--no-sensors` to try the app
+It also publishes today's energy total. Add `--history-days 30` to
+publish made-up totals for the last 30 days as well, to fill the app's
+history chart. Use `--interval-s` to change how often, or `--no-sensors`
+to try the app
 without readings.
 
 Stop it with Ctrl+C and it reports `offline`. If you kill it outright, the

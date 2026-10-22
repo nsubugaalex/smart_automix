@@ -113,6 +113,32 @@ void main() {
           reason: 'no timestamp to check');
     });
 
+    test('energy-day topics and payloads', () {
+      expect(topics.energyDay('2026-10-21'),
+          'smartautomix/panel-test/energy/2026-10-21');
+      expect(topics.allEnergyDays, 'smartautomix/panel-test/energy/+');
+      expect(
+          topics.energyDateFrom(topics.energyDay('2026-10-21')), '2026-10-21');
+      expect(topics.energyDateFrom(topics.energyDay('2026-13-45')), isNull);
+      expect(topics.energyDateFrom(topics.meter), isNull);
+
+      final first = DateTime(2026, 10, 21, 0, 0, 5);
+      final last = DateTime(2026, 10, 21, 23, 59, 55);
+      final day = PanelTopics.parseEnergyDay(PanelTopics.encodeEnergyDay(
+          kwh: 79.9123, registerKwh: 48131.6, firstAt: first, lastAt: last))!;
+      expect(day.kwh, 79.912);
+      expect(day.firstAt, first);
+      expect(day.lastAt, last);
+      for (final bad in [
+        '',
+        '{"kwh": 1, "reg": 2, "first": 10}',
+        '{"kwh": -1, "reg": 2, "first": 10, "last": 20}',
+        '{"kwh": 1, "reg": 2, "first": 20, "last": 10}',
+      ]) {
+        expect(PanelTopics.parseEnergyDay(bad), isNull, reason: bad);
+      }
+    });
+
     test('parses ON/OFF case-insensitively', () {
       expect(PanelTopics.parseSwitch('ON'), isTrue);
       expect(PanelTopics.parseSwitch(' off '), isFalse);
@@ -199,14 +225,28 @@ void main() {
     link.telemetry.listen((t) => readings.add(switch (t) {
           MachinePowerReport() => '${t.machineId}:${t.watts}W/${t.amps}A',
           MeterReport() => 'meter:${t.watts}W/${t.kwh}kWh',
+          EnergyDayReport() => 'day:${t.date}:${t.kwh}kWh',
         }));
 
     transport
       ..deliver(topics.power('4'), '{"w": 6800, "a": 11.2}')
       ..deliver(topics.power('5'), 'garbage')
-      ..deliver(topics.meter, '{"w": 9000, "kwh": 48211.5}');
+      ..deliver(topics.meter, '{"w": 9000, "kwh": 48211.5}')
+      ..deliver(
+          topics.energyDay('2026-10-21'),
+          PanelTopics.encodeEnergyDay(
+              kwh: 79.9,
+              registerKwh: 48131.6,
+              firstAt: DateTime(2026, 10, 21, 0, 0, 5),
+              lastAt: DateTime(2026, 10, 21, 23, 59, 55)))
+      ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
+      ..deliver('${topics.energyDay('')}not-a-date', '{"kwh": 1}');
     await Future<void>.delayed(Duration.zero);
 
-    expect(readings, ['4:6800.0W/11.2A', 'meter:9000.0W/48211.5kWh']);
+    expect(readings, [
+      '4:6800.0W/11.2A',
+      'meter:9000.0W/48211.5kWh',
+      'day:2026-10-21:79.9kWh',
+    ]);
   });
 }

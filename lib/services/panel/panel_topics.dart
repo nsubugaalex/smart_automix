@@ -12,6 +12,7 @@ import 'dart:convert';
 /// | `smartautomix/<panel>/status`              | panel → app | `online` / `offline` (last will) | yes |
 /// | `smartautomix/<panel>/machines/<id>/power` | panel → app | `{"w": 7100, "a": 12.4}` | no |
 /// | `smartautomix/<panel>/meter`               | panel → app | `{"w": 15200, "kwh": 48211.7}` | no |
+/// | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": <s>, "last": <s>}` | yes |
 class PanelTopics {
   PanelTopics(this.panelId) {
     if (!isValidPanelId(panelId)) {
@@ -40,6 +41,27 @@ class PanelTopics {
 
   /// The panel's supply meter: total power and the cumulative kWh register.
   String get meter => '$_base/meter';
+
+  String get _energy => '$_base/energy/';
+
+  /// One day's energy total, kept by the panel (retained).
+  String energyDay(String date) => '$_energy$date';
+
+  /// Subscription filter matching every day's energy total.
+  String get allEnergyDays => '$_energy+';
+
+  /// The `YYYY-MM-DD` date in an energy-day topic, or null.
+  String? energyDateFrom(String topic) {
+    if (!topic.startsWith(_energy)) return null;
+    final date = topic.substring(_energy.length);
+    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(date)) return null;
+    // DateTime.parse rolls 2026-13-45 over into a real date; reject that.
+    final d = DateTime.parse(date);
+    final roundTrip = '${d.year.toString().padLeft(4, '0')}-'
+        '${d.month.toString().padLeft(2, '0')}-'
+        '${d.day.toString().padLeft(2, '0')}';
+    return roundTrip == date ? date : null;
+  }
 
   /// Subscription filter matching every machine's state topic.
   String get allMachineStates => '$_machines+/state';
@@ -120,6 +142,41 @@ class PanelTopics {
     if (watts == null || kwh == null) return null;
     return (watts: watts, kwh: kwh);
   }
+
+  /// Parse an energy-day payload: `{"kwh", "reg", "first", "last"}`
+  /// with the times in seconds since 1970. Null if invalid, or empty (the
+  /// panel deleting a day that dropped out of its history).
+  static ({double kwh, double registerKwh, DateTime firstAt, DateTime lastAt})?
+      parseEnergyDay(String payload) {
+    final json = _decodeObject(payload);
+    final kwh = _nonNegative(json?['kwh']);
+    final reg = _nonNegative(json?['reg']);
+    final first = json?['first'];
+    final last = json?['last'];
+    if (kwh == null || reg == null || first is! int || last is! int) {
+      return null;
+    }
+    if (first <= 0 || last < first) return null;
+    return (
+      kwh: kwh,
+      registerKwh: reg,
+      firstAt: DateTime.fromMillisecondsSinceEpoch(first * 1000),
+      lastAt: DateTime.fromMillisecondsSinceEpoch(last * 1000),
+    );
+  }
+
+  static String encodeEnergyDay({
+    required double kwh,
+    required double registerKwh,
+    required DateTime firstAt,
+    required DateTime lastAt,
+  }) =>
+      jsonEncode({
+        'kwh': _round(kwh, 3),
+        'reg': _round(registerKwh, 3),
+        'first': firstAt.millisecondsSinceEpoch ~/ 1000,
+        'last': lastAt.millisecondsSinceEpoch ~/ 1000,
+      });
 
   static String encodePower({required double watts, required double amps}) =>
       jsonEncode({'w': _round(watts, 1), 'a': _round(amps, 2)});

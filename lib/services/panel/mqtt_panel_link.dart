@@ -68,7 +68,8 @@ class MqttPanelLink extends PanelLink {
         ..subscribe(topics.status)
         ..subscribe(topics.allMachineStates)
         ..subscribe(topics.allMachinePower)
-        ..subscribe(topics.meter);
+        ..subscribe(topics.meter)
+        ..subscribe(topics.allEnergyDays);
       _update(PanelLinkStatus.connected);
     } catch (e) {
       if (_disposed) return;
@@ -89,6 +90,20 @@ class MqttPanelLink extends PanelLink {
       final meter = PanelTopics.parseMeter(message.payload);
       if (meter != null) {
         _telemetry.add(MeterReport(watts: meter.watts, kwh: meter.kwh));
+      }
+      return;
+    }
+    final energyDate = topics.energyDateFrom(message.topic);
+    if (energyDate != null) {
+      final day = PanelTopics.parseEnergyDay(message.payload);
+      if (day != null) {
+        _telemetry.add(EnergyDayReport(
+          date: energyDate,
+          kwh: day.kwh,
+          registerKwh: day.registerKwh,
+          firstAt: day.firstAt,
+          lastAt: day.lastAt,
+        ));
       }
       return;
     }

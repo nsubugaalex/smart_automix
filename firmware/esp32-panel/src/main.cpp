@@ -25,10 +25,12 @@
 #include <ArduinoJson.h>
 #include <MQTT.h>
 #include <PZEM004Tv30.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_task_wdt.h>
 #include <sys/time.h>
+#include <time.h>
 
 #if __has_include("panel_config.h")
 #include "panel_config.h"
@@ -47,6 +49,12 @@
 #ifndef NTP_SERVER
 #define NTP_SERVER "pool.ntp.org"
 #endif
+#ifndef TIMEZONE
+#define TIMEZONE "EAT-3"
+#endif
+#ifndef ENERGY_KEEP_DAYS
+#define ENERGY_KEEP_DAYS 400
+#endif
 
 #if MQTT_USE_TLS
 static_assert(sizeof(MQTT_CA_CERT) > 1 || MQTT_ALLOW_INSECURE_TLS,
@@ -60,6 +68,7 @@ const String kBase = String("smartautomix/") + PANEL_ID;
 const String kStatusTopic = kBase + "/status";
 const String kMeterTopic = kBase + "/meter";
 const String kMachinesPrefix = kBase + "/machines/";
+const String kEnergyPrefix = kBase + "/energy/";
 
 constexpr size_t kMachineCount = sizeof(MACHINES) / sizeof(MACHINES[0]);
 constexpr uint32_t kReconnectIntervalMs = 5000;
@@ -71,6 +80,11 @@ constexpr uint32_t kWatchdogTimeoutS = 30;
 constexpr uint32_t kTlsHandshakeTimeoutS = 10;
 // Before this (Nov 2023) the clock hasn't been set by NTP yet.
 constexpr time_t kMinValidEpochS = 1700000000;
+// Today's energy is published this often, and saved to flash this often
+// (constant writes wear flash out; after a restart, the register increase
+// since the last save is still counted).
+constexpr uint32_t kEnergyPublishMs = 60 * 1000;
+constexpr uint32_t kEnergySaveMs = 10 * 60 * 1000;
 
 enum class Request : int8_t { None, Off, On };
 
@@ -155,6 +169,116 @@ void publishPower(Machine &m) {
                /*retained=*/false, /*qos=*/0);
 }
 
+// ---- Daily energy ------------------------------------------------------------
+//
+// The controller is always on, so it keeps the day-by-day energy total for
+// the app: each meter reading adds the register increase since the last one
+// to the current local day. Each day is a retained message on
+// energy/<YYYY-MM-DD>, so the app gets the whole history when it connects.
+
+struct EnergyDay {
+  char date[11] = "";  // local date, YYYY-MM-DD; empty = none yet
+  double kwh = 0;
+  double lastRegKwh = 0;
+  int64_t firstAt = 0;  // first and last reading, seconds since 1970
+  int64_t lastAt = 0;
+};
+
+Preferences energyStore;
+EnergyDay energyToday;
+// The previous day, until it has been published as finished.
+EnergyDay energyPrevious;
+bool previousPublished = true;
+uint32_t lastEnergyPublish = 0;
+uint32_t lastEnergySave = 0;
+
+void localDate(time_t t, char out[11]) {
+  tm local;
+  localtime_r(&t, &local);
+  strftime(out, 11, "%Y-%m-%d", &local);
+}
+
+void saveEnergy() {
+  energyStore.putBytes("today", &energyToday, sizeof(energyToday));
+  energyStore.putBytes("prev", &energyPrevious, sizeof(energyPrevious));
+  energyStore.putBool("prevSent", previousPublished);
+}
+
+void loadEnergy() {
+  energyStore.begin("energy", /*readOnly=*/false);
+  // A size mismatch means a different firmware layout: start afresh.
+  if (energyStore.getBytesLength("today") == sizeof(energyToday)) {
+    energyStore.getBytes("today", &energyToday, sizeof(energyToday));
+  }
+  if (energyStore.getBytesLength("prev") == sizeof(energyPrevious)) {
+    energyStore.getBytes("prev", &energyPrevious, sizeof(energyPrevious));
+    previousPublished = energyStore.getBool("prevSent", true);
+  }
+}
+
+bool publishEnergyDay(const EnergyDay &day) {
+  if (day.date[0] == '\0' || !mqtt.connected()) return false;
+  char payload[128];
+  snprintf(payload, sizeof(payload),
+           "{\"kwh\":%.3f,\"reg\":%.3f,\"first\":%lld,\"last\":%lld}",
+           day.kwh, day.lastRegKwh, static_cast<long long>(day.firstAt),
+           static_cast<long long>(day.lastAt));
+  return mqtt.publish(kEnergyPrefix + day.date, payload, /*retained=*/true,
+                      /*qos=*/1);
+}
+
+// Publish what the app doesn't have yet: the finished previous day (if it
+// ended while offline) and today so far.
+void publishEnergy(uint32_t nowMs) {
+  if (!previousPublished && publishEnergyDay(energyPrevious)) {
+    previousPublished = true;
+    // Retained history is kept for ENERGY_KEEP_DAYS: remove the day that
+    // just dropped out of it.
+    char expired[11];
+    localDate(time(nullptr) - static_cast<time_t>(ENERGY_KEEP_DAYS) * 86400,
+              expired);
+    mqtt.publish(kEnergyPrefix + expired, "", /*retained=*/true, /*qos=*/1);
+  }
+  if (publishEnergyDay(energyToday)) lastEnergyPublish = nowMs;
+}
+
+void recordEnergy(double registerKwh, uint32_t nowMs) {
+  const time_t now = time(nullptr);
+  if (now < kMinValidEpochS) return;  // no date until NTP has set the clock
+  char today[11];
+  localDate(now, today);
+
+  if (strcmp(today, energyToday.date) != 0) {
+    // A new day. Energy between the old day's last reading and this one
+    // isn't counted for either (seconds, unless the controller was off).
+    if (energyToday.date[0] != '\0') {
+      energyPrevious = energyToday;
+      previousPublished = false;
+    }
+    energyToday = EnergyDay();
+    strcpy(energyToday.date, today);
+    energyToday.lastRegKwh = registerKwh;
+    energyToday.firstAt = energyToday.lastAt = now;
+    saveEnergy();
+    lastEnergySave = nowMs;
+    publishEnergy(nowMs);
+    return;
+  }
+
+  // A register that went backwards was replaced or reset: carry on from
+  // its new value without adding anything.
+  if (registerKwh > energyToday.lastRegKwh) {
+    energyToday.kwh += registerKwh - energyToday.lastRegKwh;
+  }
+  energyToday.lastRegKwh = registerKwh;
+  energyToday.lastAt = now;
+  if (nowMs - lastEnergySave >= kEnergySaveMs) {
+    saveEnergy();
+    lastEnergySave = nowMs;
+  }
+  if (nowMs - lastEnergyPublish >= kEnergyPublishMs) publishEnergy(nowMs);
+}
+
 // One PZEM read takes ~100 ms, so a sweep of all of them would leave trips
 // unnoticed for a second or more. Instead each loop() pass reads at most
 // one PZEM: first each machine's, then the incomer meter's.
@@ -162,7 +286,7 @@ struct SensorSweep {
   bool active = false;
   size_t step = 0;
   float meterWatts = 0;
-  float meterKwh = 0;
+  double meterKwh = 0;  // float rounds a 5-digit register to 0.01
   bool meterValid = true;
 };
 
@@ -186,10 +310,8 @@ void stepSensors(uint32_t now) {
   const size_t meterIndex = sweep.step - kMachineCount;
   if (meterIndex < meterPzems.size()) {
     sweep.step++;
-    if (!sweep.meterValid || !mqtt.connected()) {
-      sweep.meterValid = false;
-      return;
-    }
+    // Read even while offline: the daily energy keeps counting.
+    if (!sweep.meterValid) return;
     auto *pzem = meterPzems[meterIndex];
     const float w = pzem->power();
     const float e = pzem->energy();
@@ -203,7 +325,9 @@ void stepSensors(uint32_t now) {
     return;
   }
   sweep.active = false;
-  if (meterPzems.empty() || !sweep.meterValid || !mqtt.connected()) return;
+  if (meterPzems.empty() || !sweep.meterValid) return;
+  recordEnergy(sweep.meterKwh, now);
+  if (!mqtt.connected()) return;
   char payload[64];
   snprintf(payload, sizeof(payload), "{\"w\":%.1f,\"kwh\":%.3f}",
            sweep.meterWatts, sweep.meterKwh);
@@ -304,6 +428,7 @@ void connectMqtt() {
   mqtt.publish(kStatusTopic, "online", /*retained=*/true, /*qos=*/1);
   // Tell the app the real state of every machine straight away.
   for (auto &m : machines) publishState(m);
+  publishEnergy(millis());
   log("online as panel " PANEL_ID);
 }
 
@@ -452,6 +577,7 @@ void setup() {
     meterPzems.push_back(
         new PZEM004Tv30(Serial2, PZEM_RX_PIN, PZEM_TX_PIN, address));
   }
+  loadEnergy();
 
 #if MQTT_USE_TLS
   if (strlen(MQTT_CA_CERT) > 0) {
@@ -467,8 +593,9 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   log("connecting to WiFi " WIFI_SSID "...");
-  // Syncs in the background once WiFi is up; used for command ages.
-  configTime(0, 0, NTP_SERVER);
+  // Syncs in the background once WiFi is up; used for command ages and
+  // to date the daily energy (in local time).
+  configTzTime(TIMEZONE, NTP_SERVER);
 
   mqtt.begin(MQTT_HOST, MQTT_PORT, net);
   mqtt.onMessage(onMessage);

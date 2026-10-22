@@ -93,6 +93,67 @@ void main() {
       expect(EnergyLog.fromJson('[{"date": "x"}, 5]').isEmpty, isTrue);
     });
 
+    group('panel day totals', () {
+      void panelDay(String date, double kwh, double reg,
+              {required DateTime first, required DateTime last}) =>
+          log.applyPanelDay(
+              date: date,
+              kwh: kwh,
+              registerKwh: reg,
+              firstAt: first,
+              lastAt: last,
+              ratePerKwh: 1000);
+
+      test('fill a day the app never saw, priced at the current rate', () {
+        panelDay('2026-10-06', 80, 1080,
+            first: DateTime(2026, 10, 6, 0, 0, 5),
+            last: DateTime(2026, 10, 6, 23, 59, 55));
+        final day = log.day(DateTime(2026, 10, 6))!;
+        expect(day.kwh, 80);
+        expect(day.costUgx, 80000);
+        expect(day.isCompleteAt(DateTime(2026, 10, 7)), isTrue);
+      });
+
+      test("replace the app's partial day, keeping the app's rate", () {
+        read(100, DateTime(2026, 10, 6, 9), rate: 800);
+        read(130, DateTime(2026, 10, 6, 17), rate: 800); // 30 kWh, 800/kWh
+        panelDay('2026-10-06', 75, 140,
+            first: DateTime(2026, 10, 6, 0, 0, 5),
+            last: DateTime(2026, 10, 6, 23, 59, 55));
+        final day = log.day(DateTime(2026, 10, 6))!;
+        expect(day.kwh, 75);
+        expect(day.costUgx, closeTo(75 * 800, 1e-6));
+        expect(day.firstAt, DateTime(2026, 10, 6, 0, 0, 5));
+      });
+
+      test("don't replace a day the app counted more of", () {
+        read(100, DateTime(2026, 10, 6, 0, 1));
+        read(180, DateTime(2026, 10, 6, 23, 59));
+        panelDay('2026-10-06', 20, 180,
+            first: DateTime(2026, 10, 6, 18), last: DateTime(2026, 10, 6, 23));
+        expect(log.day(DateTime(2026, 10, 6))!.kwh, 80);
+      });
+
+      test("today: the app's live readings carry on from the panel's total",
+          () {
+        // The app opens at 10:00; the panel has counted since midnight.
+        panelDay('2026-10-07', 30, 1030,
+            first: DateTime(2026, 10, 7, 0, 0, 5),
+            last: DateTime(2026, 10, 7, 9, 59));
+        read(1031, DateTime(2026, 10, 7, 10)); // live meter reading
+        read(1035, DateTime(2026, 10, 7, 11));
+        expect(log.day(DateTime(2026, 10, 7))!.kwh, closeTo(35, 1e-9));
+
+        // The panel's next periodic total (counted 1030 → 1036) arrives.
+        panelDay('2026-10-07', 36, 1036,
+            first: DateTime(2026, 10, 7, 0, 0, 5),
+            last: DateTime(2026, 10, 7, 11, 1));
+        read(1037, DateTime(2026, 10, 7, 11, 2));
+        expect(log.day(DateTime(2026, 10, 7))!.kwh, closeTo(37, 1e-9),
+            reason: 'no energy counted twice');
+      });
+    });
+
     test('exports CSV, oldest first', () {
       read(100, DateTime(2026, 10, 6, 0, 2));
       read(120, DateTime(2026, 10, 6, 23, 58));
@@ -142,6 +203,25 @@ void main() {
       final day = monitor.history.day(DateTime(2026, 10, 7))!;
       expect(day.kwh, closeTo(30, 1e-9));
       expect(day.costUgx, closeTo(27000, 1e-6));
+      monitor.dispose();
+    });
+
+    test('takes day totals from the panel and saves them', () async {
+      SharedPreferences.setMockInitialValues({});
+      var monitor = await create();
+      telemetry.add(EnergyDayReport(
+        date: '2026-10-06',
+        kwh: 80,
+        registerKwh: 1080,
+        firstAt: DateTime(2026, 10, 6, 0, 0, 5),
+        lastAt: DateTime(2026, 10, 6, 23, 59, 55),
+      ));
+      expect(monitor.history.day(DateTime(2026, 10, 6))!.costUgx, 72000);
+      monitor.dispose(); // saves what the debounce hadn't yet
+      await Future<void>.delayed(Duration.zero);
+
+      monitor = await create();
+      expect(monitor.history.day(DateTime(2026, 10, 6))!.kwh, 80);
       monitor.dispose();
     });
 

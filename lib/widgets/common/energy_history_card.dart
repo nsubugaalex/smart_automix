@@ -112,8 +112,8 @@ class _EnergyHistoryCardState extends State<EnergyHistoryCard> {
             if (anyPartial) ...[
               const SizedBox(height: 8),
               Text(
-                'Outlined bars are days the app did not read the meter all '
-                'day, so they may be missing some energy.',
+                'Outlined bars are days without meter readings for the '
+                'whole day, so they may be missing some energy.',
                 style: theme.textTheme.bodySmall,
               ),
             ],

@@ -54,6 +54,28 @@ class MeterReport extends PanelTelemetry {
   final double kwh;
 }
 
+/// One day's energy through the supply meter, as totalled by the panel.
+/// The panel is always on, so this covers time the app was closed.
+@immutable
+class EnergyDayReport extends PanelTelemetry {
+  const EnergyDayReport({
+    required this.date,
+    required this.kwh,
+    required this.registerKwh,
+    required this.firstAt,
+    required this.lastAt,
+  });
+
+  /// Local calendar date, `YYYY-MM-DD`.
+  final String date;
+  final double kwh;
+
+  /// The meter register at [lastAt].
+  final double registerKwh;
+  final DateTime firstAt;
+  final DateTime lastAt;
+}
+
 /// The connection between the app and the switch panel.
 ///
 /// Commands go out through [sendCommand]; the resulting machine state comes

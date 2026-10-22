@@ -78,6 +78,7 @@ void _endToEnd() {
       '--ignore', '2',
       '--interval-s', '1',
       '--delay-ms', '100',
+      '--history-days', '3',
     ]);
     final online = Completer<void>();
     simulator!.stdout
@@ -153,6 +154,23 @@ void _endToEnd() {
         .first
         .timeout(const Duration(seconds: 10));
     expect(await reading, isA<MachinePowerReport>());
+  });
+
+  test("the panel's daily energy totals fill the app's history", () async {
+    final today = DateTime.now();
+    final yesterday = DateTime(today.year, today.month, today.day - 1);
+    await eventually(
+        () =>
+            devices.energyHistory.day(yesterday) != null &&
+            devices.energyHistory.day(today) != null,
+        "yesterday's and today's totals");
+    final past = devices.energyHistory.day(yesterday)!;
+    expect(past.kwh, greaterThan(0));
+    expect(past.isCompleteAt(today), isTrue);
+    expect(
+        devices.energyHistory
+            .day(DateTime(today.year, today.month, today.day - 3)),
+        isNotNull);
   });
 
   test('the panel drops a late ON but still runs a late OFF', () async {

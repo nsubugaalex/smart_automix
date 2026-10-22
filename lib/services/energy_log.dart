@@ -165,6 +165,39 @@ class EnergyLog {
     return true;
   }
 
+  /// Take a day's total from the panel, which is always on and so usually
+  /// saw more of the day than the app. Returns whether it changed the log.
+  ///
+  /// The panel's figure replaces the app's own unless the app counted more
+  /// (e.g. a new controller that started partway through the day). Its
+  /// register value becomes the base for the app's next live reading, so
+  /// nothing is counted twice. The cost keeps the rate the app had priced
+  /// that day at; a day the app never saw is priced at [ratePerKwh].
+  bool applyPanelDay({
+    required String date,
+    required double kwh,
+    required double registerKwh,
+    required DateTime firstAt,
+    required DateTime lastAt,
+    required double ratePerKwh,
+  }) {
+    final existing = _days[date];
+    if (existing != null && existing.kwh > kwh) return false;
+    final rate = existing != null && existing.kwh > 0
+        ? existing.costUgx / existing.kwh
+        : ratePerKwh;
+    _days[date] = DailyEnergy(
+      date: date,
+      kwh: kwh,
+      costUgx: kwh * rate,
+      lastRegisterKwh: registerKwh,
+      firstAt: firstAt,
+      lastAt: lastAt,
+    );
+    _prune();
+    return true;
+  }
+
   /// Start [date]'s record from a known register value without a reading
   /// (used to carry over the older single-day format).
   void seedDay(DateTime date, {required double registerKwh}) {

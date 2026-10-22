@@ -78,6 +78,7 @@ class PowerMonitor extends ChangeNotifier {
 
   EnergyLog _history = EnergyLog();
   DateTime? _lastSave;
+  Timer? _saveTimer;
 
   /// Metered energy and cost per day.
   EnergyLog get history => _history;
@@ -136,6 +137,20 @@ class PowerMonitor extends ChangeNotifier {
   void _onTelemetry(PanelTelemetry report) {
     final now = _now();
     switch (report) {
+      case EnergyDayReport():
+        final changed = _history.applyPanelDay(
+          date: report.date,
+          kwh: report.kwh,
+          registerKwh: report.registerKwh,
+          firstAt: report.firstAt,
+          lastAt: report.lastAt,
+          ratePerKwh: _rate(),
+        );
+        if (changed) {
+          _saveSoon();
+          notifyListeners();
+        }
+        return;
       case MachinePowerReport():
         _machines[report.machineId] =
             PowerReading(watts: report.watts, amps: report.amps, at: now);
@@ -151,6 +166,15 @@ class PowerMonitor extends ChangeNotifier {
     }
     _expiryTimer ??= Timer.periodic(maxAge ~/ 3, (_) => removeStale());
     notifyListeners();
+  }
+
+  /// Save once a burst of updates is over: on connecting, the broker
+  /// delivers every retained day at once.
+  void _saveSoon() {
+    _saveTimer ??= Timer(const Duration(seconds: 2), () {
+      _saveTimer = null;
+      unawaited(_save());
+    });
   }
 
   Future<void> _save() async {
@@ -180,7 +204,8 @@ class PowerMonitor extends ChangeNotifier {
   @override
   void dispose() {
     // Keep the readings since the last periodic save.
-    if (_lastSave != null) unawaited(_save());
+    if (_lastSave != null || _saveTimer != null) unawaited(_save());
+    _saveTimer?.cancel();
     _sub.cancel();
     _expiryTimer?.cancel();
     super.dispose();

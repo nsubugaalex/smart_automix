@@ -46,6 +46,11 @@
 // Time server. Use the site router or a local server if the panel has no
 // internet access.
 #define NTP_SERVER "pool.ntp.org"
+// Local time zone (POSIX format), for dating the daily energy totals.
+// "EAT-3" is East Africa Time, UTC+3.
+#define TIMEZONE "EAT-3"
+// Days of daily energy history kept on the broker.
+#define ENERGY_KEEP_DAYS 400
 
 // ---- PZEM-004T v3 energy meters ----------------------------------------------
 

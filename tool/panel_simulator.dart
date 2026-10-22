@@ -5,7 +5,8 @@
 // "offline" last will), listens for ON/OFF commands, and reports each
 // machine's new state as a retained message. Every few seconds it also
 // publishes each machine's power draw and a supply meter reading, with a
-// little noise, as current sensors and an energy meter would.
+// little noise, as current sensors and an energy meter would, and today's
+// energy total (retained, like the firmware's daily totals).
 //
 // Usage:
 //   dart run tool/panel_simulator.dart --panel <panel-id> [options]
@@ -24,6 +25,8 @@
 //   --interval-s <s>    Seconds between power/meter readings (default 5)
 //   --meter-start <kwh> Starting meter register (default 48210)
 //   --no-sensors        Don't publish power or meter readings
+//   --history-days <n>  Also publish made-up daily energy totals for the
+//                       last n days, to fill the app's history chart
 //
 // Power readings use the ratings of the app's demo machines (IDs 1-6);
 // any other machine ID is treated as a 1 kW single-phase load.
@@ -117,6 +120,37 @@ Future<void> main(List<String> args) async {
   final meter =
       _Meter(kwh: double.tryParse(options['meter-start'] ?? '') ?? 48210.0);
   final random = Random();
+
+  // Today's energy, kept like the firmware does: register increases since
+  // the first reading of the (local) day.
+  var day = _EnergyDay.start(DateTime.now(), meter.kwh);
+  void publishEnergyDay(_EnergyDay d) => publish(
+      topics.energyDay(d.date),
+      PanelTopics.encodeEnergyDay(
+          kwh: d.kwh,
+          registerKwh: d.registerKwh,
+          firstAt: d.firstAt,
+          lastAt: d.lastAt));
+
+  final historyDays = int.tryParse(options['history-days'] ?? '') ?? 0;
+  if (sensors && historyDays > 0) {
+    var register = meter.kwh;
+    final today = DateTime.now();
+    for (var i = 1; i <= historyDays; i++) {
+      final date = DateTime(today.year, today.month, today.day - i);
+      final weekend = date.weekday >= DateTime.saturday;
+      final kwh = (weekend ? 15 : 55) + random.nextDouble() * 30;
+      register -= kwh;
+      publishEnergyDay(_EnergyDay(
+        date: _EnergyDay.dateKey(date),
+        kwh: kwh,
+        registerKwh: register + kwh,
+        firstAt: date.add(const Duration(seconds: 5)),
+        lastAt: date.add(const Duration(hours: 23, minutes: 59, seconds: 55)),
+      ));
+    }
+    _log('published made-up energy totals for the last $historyDays days');
+  }
   void publishReadings() {
     var total = _Meter.baseLoadWatts * _jitter(random);
     for (final id in machineIds) {
@@ -137,6 +171,15 @@ Future<void> main(List<String> args) async {
     meter.advance(total);
     publish(topics.meter, PanelTopics.encodeMeter(watts: total, kwh: meter.kwh),
         retain: false);
+
+    final now = DateTime.now();
+    if (_EnergyDay.dateKey(now) != day.date) {
+      publishEnergyDay(day); // the finished day
+      day = _EnergyDay.start(now, meter.kwh);
+    } else {
+      day = day.advance(now, meter.kwh);
+    }
+    publishEnergyDay(day);
   }
 
   client.updates!.listen((batch) {
@@ -252,6 +295,43 @@ const _demoMachines = {
 };
 
 /// The supply meter's cumulative kWh register.
+/// One day's energy total, as the firmware keeps it.
+class _EnergyDay {
+  _EnergyDay({
+    required this.date,
+    required this.kwh,
+    required this.registerKwh,
+    required this.firstAt,
+    required this.lastAt,
+  });
+
+  _EnergyDay.start(DateTime now, double register)
+      : this(
+            date: dateKey(now),
+            kwh: 0,
+            registerKwh: register,
+            firstAt: now,
+            lastAt: now);
+
+  static String dateKey(DateTime t) =>
+      '${t.year}-${t.month.toString().padLeft(2, '0')}-'
+      '${t.day.toString().padLeft(2, '0')}';
+
+  final String date;
+  final double kwh;
+  final double registerKwh;
+  final DateTime firstAt;
+  final DateTime lastAt;
+
+  _EnergyDay advance(DateTime now, double register) => _EnergyDay(
+        date: date,
+        kwh: kwh + max(0, register - registerKwh),
+        registerKwh: register,
+        firstAt: firstAt,
+        lastAt: now,
+      );
+}
+
 class _Meter {
   _Meter({required this.kwh});
 
