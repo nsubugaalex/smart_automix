@@ -7,11 +7,16 @@ import 'panel_topics.dart';
 /// [PanelLink] that talks to the panel controller through an MQTT broker,
 /// using the topic contract in [PanelTopics].
 class MqttPanelLink extends PanelLink {
-  MqttPanelLink({required this.topics, required MqttTransport transport})
-      : _transport = transport;
+  MqttPanelLink({
+    required this.topics,
+    required MqttTransport transport,
+    DateTime Function() clock = DateTime.now,
+  })  : _transport = transport,
+        _clock = clock;
 
   final PanelTopics topics;
   final MqttTransport _transport;
+  final DateTime Function() _clock;
   final _reports = StreamController<MachineStateReport>.broadcast();
   final _telemetry = StreamController<PanelTelemetry>.broadcast();
   StreamSubscription<MqttTextMessage>? _messagesSub;
@@ -107,8 +112,8 @@ class MqttPanelLink extends PanelLink {
   Future<bool> sendCommand(String machineId, {required bool on}) async {
     if (_status != PanelLinkStatus.connected) return false;
     try {
-      _transport.publish(
-          topics.command(machineId), on ? PanelTopics.on : PanelTopics.off);
+      _transport.publish(topics.command(machineId),
+          PanelTopics.encodeCommand(on: on, issuedAt: _clock()));
       return true;
     } catch (_) {
       return false;

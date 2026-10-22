@@ -332,7 +332,7 @@ class _TopicsCard extends StatelessWidget {
         expandedAlignment: Alignment.centerLeft,
         expandedCrossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          row('Commands from the app (ON / OFF)',
+          row('Commands from the app (JSON: cmd ON / OFF, ts)',
               topics.command('<machine-id>')),
           row('State reported by the panel (ON / OFF, retained)',
               topics.state('<machine-id>')),

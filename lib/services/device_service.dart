@@ -392,7 +392,8 @@ class DeviceService extends ChangeNotifier {
       _failures.add(CommandFailure(
         device.name,
         'The switch panel did not confirm the command within '
-        '${confirmTimeout.inSeconds}s. Check the machine on site.',
+        '${confirmTimeout.inSeconds}s. Check the machine on site, and '
+        "that this device's clock is correct.",
       ));
     });
   }

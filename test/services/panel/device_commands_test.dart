@@ -68,7 +68,8 @@ void main() {
 
     await devices.toggleDevice('pump');
     expect(transport.published.single.topic, topics.command('pump'));
-    expect(transport.published.single.payload, 'ON');
+    expect(PanelTopics.parseCommand(transport.published.single.payload)?.on,
+        isTrue);
     expect(isOn('pump'), isFalse, reason: 'not confirmed yet');
     expect(devices.isAwaitingConfirmation('pump'), isTrue);
 
@@ -117,7 +118,8 @@ void main() {
 
     await devices.turnOffAllDevices();
     expect(
-      transport.published.map((m) => '${m.topic} ${m.payload}'),
+      transport.published.map((m) =>
+          '${m.topic} ${PanelTopics.parseCommand(m.payload)!.on ? 'ON' : 'OFF'}'),
       unorderedEquals(
           ['${topics.command('mill')} OFF', '${topics.command('pump')} OFF']),
     );

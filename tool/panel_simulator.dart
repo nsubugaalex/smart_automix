@@ -145,22 +145,30 @@ Future<void> main(List<String> args) async {
       if (message is! MqttPublishMessage) continue;
       final payload =
           MqttPublishPayload.bytesToStringAsString(message.payload.message);
-      final on = PanelTopics.parseSwitch(payload);
-      if (on == null) continue;
-
       final stateId = topics.machineIdFrom(received.topic, suffix: 'state');
       if (stateId != null) {
+        final on = PanelTopics.parseSwitch(payload);
+        if (on == null) continue;
         machineIds.add(stateId);
         on ? running.add(stateId) : running.remove(stateId);
         continue;
       }
       final machineId = topics.machineIdFrom(received.topic, suffix: 'set');
-      if (machineId == null) continue;
+      final command = PanelTopics.parseCommand(payload);
+      if (machineId == null || command == null) continue;
       machineIds.add(machineId);
+      final on = command.on;
+
+      // Like the firmware: a late ON is dropped, unconfirmed.
+      if (command.isStaleAt(DateTime.now())) {
+        _log('machine $machineId: ON sent at ${command.issuedAt!.toLocal()} '
+            'arrived too late — ignored');
+        continue;
+      }
 
       if (ignored.contains(machineId)) {
         _log(
-            'machine $machineId: $payload received — ignored (simulated fault)');
+            'machine $machineId: ${on ? 'ON' : 'OFF'} received — ignored (simulated fault)');
         continue;
       }
       _log('machine $machineId: switching ${on ? 'ON' : 'OFF'}…');

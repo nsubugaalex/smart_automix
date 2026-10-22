@@ -38,6 +38,14 @@
 // don't stack up and trip the main breaker. The app also staggers
 // "Start All"; this protects against several quick taps too.
 #define MIN_START_GAP_MS 2000
+// An ON command sent longer ago than this (or this far in the future) is
+// dropped: the app has already told the operator it failed. OFF commands
+// always run. Needs the clock set by NTP; until then commands are not
+// checked. 0 turns the check off.
+#define CMD_MAX_AGE_MS 10000
+// Time server. Use the site router or a local server if the panel has no
+// internet access.
+#define NTP_SERVER "pool.ntp.org"
 
 // ---- PZEM-004T v3 energy meters ----------------------------------------------
 

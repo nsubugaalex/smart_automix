@@ -22,14 +22,17 @@ broker. The topic names are defined in code in
 
 | Topic | Direction | Payload | QoS | Retained |
 | --- | --- | --- | --- | --- |
-| `smartautomix/<panel>/machines/<machine>/set` | app → panel | `ON` or `OFF` | 1 | no |
+| `smartautomix/<panel>/machines/<machine>/set` | app → panel | `{"cmd": "ON", "ts": 1792656000000}` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/state` | panel → app | `ON` or `OFF` | 1 | **yes** |
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
 | `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
 
-`ON`/`OFF` payloads are plain text, matched case-insensitively. The `power`
-and `meter` topics are optional and only used if the panel has sensors
+`state` and `status` payloads are plain text, matched case-insensitively.
+A command's `cmd` is `ON` or `OFF`, and `ts` is when the app sent it, in
+milliseconds since 1970 (UTC). Controllers should also accept a plain
+`ON`/`OFF` command payload, which is handy for testing with
+`mosquitto_pub`. The `power` and `meter` topics are optional and only used if the panel has sensors
 (see [Power and energy readings](#power-and-energy-readings)).
 
 ## What the controller must do
@@ -50,6 +53,12 @@ and `meter` topics are optional and only used if the panel has sensors
      what was commanded.
    - The app waits **5 seconds** for this report. If none arrives, it shows
      "did not confirm" and leaves the machine in its previous state.
+   - **Drop a late `ON`.** If `ts` is more than 10 seconds away from the
+     controller's clock, in either direction, ignore an `ON` and send no
+     report, so the app shows "did not confirm". Otherwise a delayed
+     message could start a machine after the operator was told the
+     command failed. Always carry out `OFF`, whatever its age. Skip the
+     check while the controller's clock isn't set (no NTP yet).
 5. **Report local changes too.** If a machine is switched at the panel, or
    tripped by a breaker, publish its new state so the app stays correct.
 

@@ -8,7 +8,8 @@
 // - All relays start OFF at power-up, so machines never restart by
 //   themselves after a power cut or reboot.
 // - Commands are not queued while offline (clean MQTT session), so an old
-//   command can't switch a machine hours later.
+//   command can't switch a machine hours later. An ON that arrives more
+//   than CMD_MAX_AGE_MS after the app sent it is dropped as well.
 // - Losing WiFi or the broker leaves machines as they are.
 // - Machines are switched on at least MIN_START_GAP_MS apart.
 // - A watchdog restarts the controller if it hangs; like any restart,
@@ -21,11 +22,13 @@
 // the contactor coil circuit. This controller is not a safety device.
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <MQTT.h>
 #include <PZEM004Tv30.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_task_wdt.h>
+#include <sys/time.h>
 
 #if __has_include("panel_config.h")
 #include "panel_config.h"
@@ -37,6 +40,12 @@
 // Older panel_config.h files predate this option.
 #ifndef MQTT_ALLOW_INSECURE_TLS
 #define MQTT_ALLOW_INSECURE_TLS 0
+#endif
+#ifndef CMD_MAX_AGE_MS
+#define CMD_MAX_AGE_MS 10000
+#endif
+#ifndef NTP_SERVER
+#define NTP_SERVER "pool.ntp.org"
 #endif
 
 #if MQTT_USE_TLS
@@ -60,6 +69,8 @@ constexpr uint32_t kFeedbackDebounceMs = 100;
 // normal blocking call: MQTT connect (2 s), TLS handshake (10 s).
 constexpr uint32_t kWatchdogTimeoutS = 30;
 constexpr uint32_t kTlsHandshakeTimeoutS = 10;
+// Before this (Nov 2023) the clock hasn't been set by NTP yet.
+constexpr time_t kMinValidEpochS = 1700000000;
 
 enum class Request : int8_t { None, Off, On };
 
@@ -201,24 +212,72 @@ void stepSensors(uint32_t now) {
 
 // ---- MQTT --------------------------------------------------------------------
 
+// Milliseconds since 1970, or 0 while the clock isn't set by NTP yet.
+int64_t epochMs() {
+  timeval tv;
+  gettimeofday(&tv, nullptr);
+  if (tv.tv_sec < kMinValidEpochS) return 0;
+  return static_cast<int64_t>(tv.tv_sec) * 1000 + tv.tv_usec / 1000;
+}
+
+// The app sends {"cmd":"ON","ts":<ms since 1970>}. Plain ON/OFF is
+// accepted too (manual testing, older apps); its sentAtMs is 0.
+bool parseCommand(const String &payload, Request &request, int64_t &sentAtMs) {
+  String cmd = payload;
+  sentAtMs = 0;
+  if (payload.startsWith("{")) {
+    JsonDocument doc;
+    if (deserializeJson(doc, payload)) return false;
+    cmd = doc["cmd"] | "";
+    sentAtMs = doc["ts"] | static_cast<int64_t>(0);
+  }
+  cmd.trim();
+  cmd.toUpperCase();
+  if (cmd == "ON") {
+    request = Request::On;
+  } else if (cmd == "OFF") {
+    request = Request::Off;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+// Whether to drop an ON that arrived too late (or, if the clocks disagree,
+// too early). OFF is never dropped: stopping is the safe direction.
+bool isStaleStart(const String &id, Request request, int64_t sentAtMs) {
+  if (request != Request::On || sentAtMs <= 0 || CMD_MAX_AGE_MS <= 0) {
+    return false;
+  }
+  const int64_t now = epochMs();
+  if (now == 0) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      log("clock not set by NTP yet: command age not checked");
+    }
+    return false;
+  }
+  const int64_t age = now - sentAtMs;
+  if (llabs(age) <= CMD_MAX_AGE_MS) return false;
+  log("machine " + id + ": ON sent " + String(static_cast<long>(age / 1000)) +
+      " s ago ignored (too late, or the phone's clock is wrong)");
+  return true;
+}
+
 // Called from mqtt.loop(). The MQTT library must not publish from inside
 // its callback, so this only records the request for loop() to act on.
 void onMessage(String &topic, String &payload) {
   if (!topic.startsWith(kMachinesPrefix) || !topic.endsWith("/set")) return;
   const String id =
       topic.substring(kMachinesPrefix.length(), topic.length() - 4);
-  payload.trim();
-  payload.toUpperCase();
   Request request;
-  if (payload == "ON") {
-    request = Request::On;
-  } else if (payload == "OFF") {
-    request = Request::Off;
-  } else {
-    return;
-  }
+  int64_t sentAtMs;
+  if (!parseCommand(payload, request, sentAtMs)) return;
   for (auto &m : machines) {
     if (id == m.cfg->id) {
+      // No state report: the app then shows "did not confirm".
+      if (isStaleStart(id, request, sentAtMs)) return;
       m.request = request;
       return;
     }
@@ -408,6 +467,8 @@ void setup() {
   WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   log("connecting to WiFi " WIFI_SSID "...");
+  // Syncs in the background once WiFi is up; used for command ages.
+  configTime(0, 0, NTP_SERVER);
 
   mqtt.begin(MQTT_HOST, MQTT_PORT, net);
   mqtt.onMessage(onMessage);

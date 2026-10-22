@@ -141,6 +141,12 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Late commands:** an `ON` that arrives more than 10 s after the app
+  sent it (`CMD_MAX_AGE_MS`) is ignored, and the app reports that the panel
+  didn't confirm. `OFF` always runs. This needs the clock set over NTP
+  (`NTP_SERVER`; use the site router if there's no internet). Until it is
+  set, commands aren't checked. A phone whose clock is wrong by more than
+  10 s can't switch machines on, and the serial log says so.
 - **Lost connection:** if the WiFi or broker connection drops, machines stay
   as they are. The broker tells the app the panel is offline (last will).
   The controller reconnects automatically. Commands sent while it was

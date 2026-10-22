@@ -79,6 +79,40 @@ void main() {
       expect(PanelTopics.parseMeter(meter), (watts: 950.0, kwh: 48210.123));
     });
 
+    test('parses commands: JSON with a timestamp, or plain ON/OFF', () {
+      final sentAt = DateTime.utc(2026, 10, 22, 8);
+      final json = PanelTopics.parseCommand(
+          PanelTopics.encodeCommand(on: true, issuedAt: sentAt))!;
+      expect(json.on, isTrue);
+      expect(json.issuedAt, sentAt);
+
+      final plain = PanelTopics.parseCommand(' off ')!;
+      expect(plain.on, isFalse);
+      expect(plain.issuedAt, isNull);
+
+      expect(PanelTopics.parseCommand('{"cmd": "ON"}')!.issuedAt, isNull);
+      for (final bad in ['1', '{"cmd": 1}', '{"ts": 5}', '[]']) {
+        expect(PanelTopics.parseCommand(bad), isNull, reason: bad);
+      }
+    });
+
+    test('only a late or early timestamped ON is stale', () {
+      final sentAt = DateTime.utc(2026, 10, 22, 8);
+      const justOver = Duration(milliseconds: 1);
+      final late = sentAt.add(PanelCommand.maxAge + justOver);
+      final early = sentAt.subtract(PanelCommand.maxAge + justOver);
+
+      final on = PanelCommand(on: true, issuedAt: sentAt);
+      expect(on.isStaleAt(sentAt.add(PanelCommand.maxAge)), isFalse);
+      expect(on.isStaleAt(late), isTrue);
+      expect(on.isStaleAt(early), isTrue, reason: 'clocks too far apart');
+
+      expect(PanelCommand(on: false, issuedAt: sentAt).isStaleAt(late), isFalse,
+          reason: 'OFF always runs');
+      expect(const PanelCommand(on: true).isStaleAt(late), isFalse,
+          reason: 'no timestamp to check');
+    });
+
     test('parses ON/OFF case-insensitively', () {
       expect(PanelTopics.parseSwitch('ON'), isTrue);
       expect(PanelTopics.parseSwitch(' off '), isFalse);
@@ -108,14 +142,20 @@ void main() {
     expect(await link.sendCommand('1', on: true), isFalse);
   });
 
-  test('commands are published as ON/OFF on the machine command topic',
+  test('commands are published, timestamped, on the machine command topic',
       () async {
+    final sentAt = DateTime.utc(2026, 10, 22, 8);
+    link.dispose();
+    transport = FakeMqttTransport();
+    link = MqttPanelLink(
+        topics: topics, transport: transport, clock: () => sentAt);
     await link.connect();
     expect(await link.sendCommand('3', on: true), isTrue);
     expect(await link.sendCommand('3', on: false), isTrue);
+    final ms = sentAt.millisecondsSinceEpoch;
     expect(transport.published.map((m) => '${m.topic} ${m.payload}'), [
-      '${topics.command('3')} ON',
-      '${topics.command('3')} OFF',
+      '${topics.command('3')} {"cmd":"ON","ts":$ms}',
+      '${topics.command('3')} {"cmd":"OFF","ts":$ms}',
     ]);
   });
 
