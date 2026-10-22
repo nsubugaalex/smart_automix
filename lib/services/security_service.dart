@@ -80,6 +80,7 @@ class SecurityService extends ChangeNotifier {
       await _storage.delete(key: _legacyPinKey);
     }
     _requirePin = await _storage.read(key: _requirePinKey) == 'true';
+    _unlockedUntil = null; // a loaded PIN starts locked
     _failedAttempts =
         int.tryParse(await _storage.read(key: _failedAttemptsKey) ?? '') ?? 0;
     _lockedOutUntil =
