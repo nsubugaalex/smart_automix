@@ -1,0 +1,191 @@
+// End-to-end: the app's real MQTT transport and DeviceService against
+// tool/panel_simulator.dart, through a real broker.
+//
+// Skipped unless MQTT_E2E_HOST is set, e.g. with a local Mosquitto:
+//   MQTT_E2E_HOST=localhost flutter test test/e2e
+// CI runs it against Mosquitto on the runner.
+
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_automix/models/device_model.dart';
+import 'package:smart_automix/services/device_service.dart';
+import 'package:smart_automix/services/panel/mqtt_transport.dart';
+import 'package:smart_automix/services/panel/panel_link.dart';
+import 'package:smart_automix/services/panel/panel_settings.dart';
+import 'package:smart_automix/services/panel/panel_topics.dart';
+import 'package:smart_automix/services/panel_service.dart';
+import 'package:smart_automix/services/tariff_service.dart';
+
+final _host = Platform.environment['MQTT_E2E_HOST'];
+final _port = int.tryParse(Platform.environment['MQTT_E2E_PORT'] ?? '') ?? 1883;
+
+/// The Dart SDK binary itself: on Windows `dart` on the PATH is a .bat
+/// wrapper, which Process.start can't run and kill() wouldn't stop.
+String get _dart {
+  final root = Platform.environment['FLUTTER_ROOT'];
+  if (root != null) {
+    final exe =
+        '$root/bin/cache/dart-sdk/bin/dart${Platform.isWindows ? '.exe' : ''}';
+    if (File(exe).existsSync()) return exe;
+  }
+  return 'dart';
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  group('app ↔ simulator', _endToEnd,
+      skip: _host == null ? 'set MQTT_E2E_HOST to run' : false);
+}
+
+void _endToEnd() {
+  // A fresh panel ID per run, so retained messages from earlier runs (or
+  // other users of a shared broker) can't interfere.
+  final panelId = 'e2e-${PanelSettings.randomHex(8)}';
+  final topics = PanelTopics(panelId);
+  final simulatorLog = <String>[];
+  Process? simulator;
+  PanelService? panel;
+  late DeviceService devices;
+  final failures = <CommandFailure>[];
+
+  /// Polls [condition] until it holds, failing after [timeout].
+  Future<void> eventually(bool Function() condition, String what,
+      {Duration timeout = const Duration(seconds: 10)}) async {
+    final deadline = DateTime.now().add(timeout);
+    while (!condition()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('Timed out waiting for $what.\n'
+            'Simulator output:\n${simulatorLog.join('\n')}');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  bool isOn(String id) => devices.getDeviceById(id)!.isOn;
+
+  setUpAll(() async {
+    simulator = await Process.start(_dart, [
+      'run',
+      'tool/panel_simulator.dart',
+      '--host', _host!, //
+      '--port', '$_port',
+      '--panel', panelId,
+      '--ignore', '2',
+      '--interval-s', '1',
+      '--delay-ms', '100',
+    ]);
+    final online = Completer<void>();
+    simulator!.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) {
+      simulatorLog.add(line);
+      if (line.contains('online.') && !online.isCompleted) online.complete();
+    });
+    simulator!.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => simulatorLog.add('stderr: $line'));
+    unawaited(simulator!.exitCode.then((code) {
+      if (!online.isCompleted) {
+        online.completeError(StateError(
+            'Simulator exited ($code):\n${simulatorLog.join('\n')}'));
+      }
+    }));
+    await online.future.timeout(const Duration(minutes: 2));
+
+    SharedPreferences.setMockInitialValues({
+      'panel_mode': 'mqtt',
+      'panel_host': _host!,
+      'panel_tcp_port': _port,
+      'panel_id': panelId,
+      'devices': jsonEncode([
+        for (final id in ['1', '2', '3'])
+          DeviceModel(
+                  id: id,
+                  name: 'Machine $id',
+                  type: 'motor',
+                  location: 'Workshop',
+                  powerConsumption: 2200)
+              .toJson(),
+      ]),
+    });
+    FlutterSecureStorage.setMockInitialValues({});
+    final service = panel = PanelService();
+    await service.init();
+    devices = DeviceService(TariffService(), panel: service);
+    await devices.init();
+    devices.commandFailures.listen(failures.add);
+    await eventually(() => panel!.isLive, 'the app to see the panel online');
+  });
+
+  tearDownAll(() async {
+    panel?.dispose();
+    simulator?.kill();
+  });
+
+  test('a command is carried out and confirmed by the panel', () async {
+    await devices.turnOnDevice('1');
+    await eventually(() => isOn('1'), 'machine 1 to be confirmed ON');
+
+    await devices.turnOffDevice('1');
+    await eventually(() => !isOn('1'), 'machine 1 to be confirmed OFF');
+    expect(failures, isEmpty);
+  });
+
+  test('a relay that never answers raises "did not confirm"', () async {
+    await devices.turnOnDevice('2');
+    await eventually(() => failures.isNotEmpty, 'a command failure',
+        timeout: DeviceService.defaultConfirmTimeout * 2);
+    expect(failures.single.machineName, 'Machine 2');
+    expect(isOn('2'), isFalse);
+    failures.clear();
+  });
+
+  test('power readings arrive from the panel', () async {
+    final reading = panel!.telemetry
+        .where((t) => t is MachinePowerReport && t.machineId == '3')
+        .first
+        .timeout(const Duration(seconds: 10));
+    expect(await reading, isA<MachinePowerReport>());
+  });
+
+  test('the panel drops a late ON but still runs a late OFF', () async {
+    // Send commands directly, as a delayed delivery would look.
+    final sender = MqttClientTransport(
+      PanelSettings(
+          mode: PanelMode.mqtt, host: _host!, tcpPort: _port, panelId: panelId),
+      clientId: 'smartautomix-e2e-${PanelSettings.randomHex(6)}',
+    );
+    await sender.connect();
+    addTearDown(sender.disconnect);
+    final late = DateTime.now().subtract(const Duration(minutes: 1));
+
+    sender.publish(topics.command('3'),
+        PanelTopics.encodeCommand(on: true, issuedAt: late));
+    await eventually(
+        () => simulatorLog.any((l) => l.contains('arrived too late')),
+        'the simulator to drop the late ON');
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    expect(isOn('3'), isFalse);
+
+    // A current ON works; then a late OFF must still switch it off.
+    sender.publish(topics.command('3'),
+        PanelTopics.encodeCommand(on: true, issuedAt: DateTime.now()));
+    await eventually(() => isOn('3'), 'machine 3 to switch ON');
+    sender.publish(topics.command('3'),
+        PanelTopics.encodeCommand(on: false, issuedAt: late));
+    await eventually(() => !isOn('3'), 'machine 3 to switch OFF');
+  });
+
+  test('stopping the panel shows it offline', () async {
+    simulator!.kill(ProcessSignal.sigint);
+    await eventually(() => panel!.panelOnline == false, 'panel offline');
+    expect(panel!.isLive, isFalse);
+  }, skip: Platform.isWindows ? 'no SIGINT for child processes' : false);
+}

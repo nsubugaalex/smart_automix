@@ -91,8 +91,17 @@ flutter test               # unit and widget tests
 dart format lib test tool  # formatting (CI checks this)
 ```
 
-Every push and pull request runs these checks plus a web build in GitHub
-Actions (see `.github/workflows/ci.yml`).
+End-to-end tests drive the real simulator through a real MQTT broker.
+They are skipped unless you point them at one, for example a local
+Mosquitto:
+
+```sh
+MQTT_E2E_HOST=localhost flutter test test/e2e   # MQTT_E2E_PORT if not 1883
+```
+
+Every push and pull request runs these checks, the end-to-end tests
+against Mosquitto, a web build and a firmware build in GitHub Actions (see
+`.github/workflows/ci.yml`).
 
 ### Project layout
 
@@ -106,3 +115,4 @@ Actions (see `.github/workflows/ci.yml`).
 | `lib/constants/uedcl_tariffs.dart` | Tariff categories and placeholder rates |
 | `tool/panel_simulator.dart` | Command-line switch panel simulator |
 | `test/` | Unit tests for models and services (MQTT tested against a fake broker), plus widget tests |
+| `test/e2e/` | End-to-end tests: the app's MQTT link against the simulator through a real broker |
