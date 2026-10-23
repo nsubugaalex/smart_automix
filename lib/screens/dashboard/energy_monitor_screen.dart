@@ -4,7 +4,9 @@ import '../../models/device_model.dart';
 import '../../models/machine_load.dart';
 import '../../services/device_service.dart';
 import '../../services/tariff_service.dart';
+import '../../services/energy_insights.dart';
 import '../../widgets/common/consumption_gauge.dart';
+import '../../widgets/common/cost_insights.dart';
 import '../../widgets/common/energy_history_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
@@ -21,6 +23,36 @@ class EnergyMonitorBody extends StatelessWidget {
   /// Assumed main-supply capacity used for the gauge threshold. This should
   /// match the facility's actual UEDCL supply/breaker rating.
   static const double assumedSupplyCapacityWatts = 15000;
+
+  /// Time-of-use and generator cards, each only when it applies.
+  static List<Widget> _costInsights() {
+    final now = DateTime.now();
+    final recent =
+        deviceService.energyHistory.lastDays(30, now).nonNulls.toList();
+    final tou = tariffService.timeOfUse;
+    final generator = GeneratorSummary.of(recent);
+    final onGenerator = deviceService.onGenerator;
+    return [
+      if (tou.enabled) ...[
+        const SizedBox(height: 12),
+        TimeOfUseCard(
+          timeOfUse: tou,
+          standardRate: tariffService.ratePerKwh,
+          summary: TouSummary.of(recent, tou),
+          now: now,
+        ),
+      ],
+      if (generator != null || onGenerator != null) ...[
+        const SizedBox(height: 12),
+        GeneratorCard(
+          summary: generator,
+          onGenerator: onGenerator,
+          generatorCostPerKwh: tariffService.generatorRatePerKwh,
+          gridRateNow: tariffService.gridRateAt(now),
+        ),
+      ],
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -188,6 +220,7 @@ class EnergyMonitorBody extends StatelessWidget {
                       ),
                       const SizedBox(height: 12),
                       EnergyHistoryCard(history: deviceService.energyHistory),
+                      ..._costInsights(),
                       const SizedBox(height: 24),
                       Text(
                         'Load per machine',

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import '../../models/device_model.dart';
+import '../../models/energy_prices.dart';
 import '../../services/device_service.dart';
 import '../../services/security_service.dart';
+import '../../services/tariff_service.dart';
 import '../../widgets/common/pin_dialogs.dart';
 import '../../widgets/custom/uganda_theme.dart';
 
@@ -9,7 +12,10 @@ import '../../widgets/custom/uganda_theme.dart';
 /// safety rules live in one place:
 ///  - switching a machine ON needs the operator PIN (when enabled);
 ///  - switching OFF never does — cutting power must always be possible;
-///  - bulk actions (Cut All / Start All) ask for confirmation first.
+///  - bulk actions (Cut All / Start All) ask for confirmation first;
+///  - with time-of-use billing, starting a large machine at peak time
+///    shows what it costs per hour now and off-peak (once per machine per
+///    day, so it informs rather than nags).
 
 Future<bool> _authorizeStart(BuildContext context) async {
   if (securityService.isUnlocked) return true;
@@ -49,11 +55,62 @@ Future<bool> _confirm(
   return confirmed ?? false;
 }
 
+/// Machines at least this big get the peak-time cost note.
+const peakNoteMinWatts = 3000.0;
+
+// Machines already shown the peak note today, so it isn't repeated.
+final _peakNoted = <String>{};
+String? _peakNotedDay;
+
+/// The peak-time cost of running [watts] for an hour, or null when not at
+/// peak (or time-of-use is off, or the rates haven't been entered).
+({double nowPerHour, double offPeakPerHour, DateTime offPeakFrom})? peakCostOf(
+    double watts, DateTime now) {
+  final tou = tariffService.timeOfUse;
+  if (tou.bandAt(now) != TouBand.peak || tou.peakRate <= tou.offPeakRate) {
+    return null;
+  }
+  final kw = watts / 1000;
+  return (
+    nowPerHour: kw * tou.peakRate,
+    offPeakPerHour: kw * tou.offPeakRate,
+    offPeakFrom: tou.nextStartOf(TouBand.offPeak, now),
+  );
+}
+
+/// Show [device]'s peak-time cost before starting it. True to go ahead.
+Future<bool> _confirmPeakStart(
+    BuildContext context, DeviceModel device, DateTime now) async {
+  if (device.powerConsumption < peakNoteMinWatts) return true;
+  final today = '${now.year}-${now.month}-${now.day}';
+  if (_peakNotedDay != today) {
+    _peakNoted.clear();
+    _peakNotedDay = today;
+  }
+  if (_peakNoted.contains(device.id)) return true;
+  final cost = peakCostOf(device.powerConsumption, now);
+  if (cost == null) return true;
+  _peakNoted.add(device.id);
+  return _confirm(
+    context,
+    title: 'Peak rate now',
+    message: '${device.name} costs about '
+        '${UgandaTheme.formatUgx(cost.nowPerHour)} per hour at the peak rate, '
+        'against ${UgandaTheme.formatUgx(cost.offPeakPerHour)} off-peak '
+        '(from ${DateFormat.Hm().format(cost.offPeakFrom)}). '
+        'Start it now anyway?',
+    confirmLabel: 'Start now',
+  );
+}
+
 /// Flip one machine on or off.
 Future<void> toggleMachine(BuildContext context, DeviceModel device) async {
   final current = deviceService.getDeviceById(device.id);
   if (current == null) return;
-  if (!current.isOn && !await _authorizeStart(context)) return;
+  if (!current.isOn) {
+    if (!await _authorizeStart(context) || !context.mounted) return;
+    if (!await _confirmPeakStart(context, current, DateTime.now())) return;
+  }
   await deviceService.toggleDevice(device.id);
 }
 
@@ -79,13 +136,21 @@ Future<void> startAllMachines(BuildContext context) async {
   if (!await _authorizeStart(context)) return;
   if (!context.mounted) return;
 
-  final stopped = deviceService.devices.where((d) => !d.isOn).length;
+  final stoppedMachines = deviceService.devices.where((d) => !d.isOn);
+  final stopped = stoppedMachines.length;
+  final peak = peakCostOf(
+      stoppedMachines.fold(0.0, (w, d) => w + d.powerConsumption),
+      DateTime.now());
   final confirmed = await _confirm(
     context,
     title: 'Start all machines?',
     message: '$stopped machine(s) will start one at a time, largest load '
         'first, ${DeviceService.startStagger.inSeconds}s apart, to avoid '
-        'tripping the main breaker. Make sure each machine is safe to run.',
+        'tripping the main breaker. Make sure each machine is safe to run.'
+        '${peak == null ? '' : '\n\nIt\'s peak time: together they cost about '
+            '${UgandaTheme.formatUgx(peak.nowPerHour)} per hour now, against '
+            '${UgandaTheme.formatUgx(peak.offPeakPerHour)} off-peak (from '
+            '${DateFormat.Hm().format(peak.offPeakFrom)}).'}',
     confirmLabel: 'Start All',
   );
   if (confirmed) await deviceService.startAllStaggered();

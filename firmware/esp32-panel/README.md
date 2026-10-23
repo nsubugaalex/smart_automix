@@ -49,6 +49,15 @@ firmware turns on the internal pull-up, so the input reads LOW when the
 contactor is closed. With feedback, the panel reports what the contactor
 actually did, and it notices trips and switching at the panel.
 
+**Generator changeover** (optional): wire an auxiliary contact of the
+changeover switch that closes on the generator side between a free GPIO
+and GND, and set `GENERATOR_PIN` in `panel_config.h`. Most changeover
+switches and ATS units have one; use a voltage-free (dry) contact only,
+never one carrying mains. The panel then publishes `grid` or `generator`
+on `source`, and counts generator energy and run time separately. Put the
+incomer meter PZEMs on the **load side** of the changeover, so they
+measure both supplies.
+
 **PZEM-004T modules:** all of them share one serial bus.
 
 | PZEM | ESP32 |
@@ -141,6 +150,9 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Hourly and generator energy:** each day's total is split by local
+  hour for grid energy (for time-of-use pricing), with generator energy
+  and run time counted apart.
 - **Daily energy:** with a supply meter, the controller totals each
   day's energy (local time, `TIMEZONE`) and publishes it, retained, to
   `energy/<date>`, so the app's history covers days it wasn't open. The

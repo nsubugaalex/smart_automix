@@ -79,6 +79,7 @@ void _endToEnd() {
       '--interval-s', '1',
       '--delay-ms', '100',
       '--history-days', '3',
+      '--generator-hours', '0-24', // on the generator all day
     ]);
     final online = Completer<void>();
     simulator!.stdout
@@ -171,6 +172,16 @@ void _endToEnd() {
         devices.energyHistory
             .day(DateTime(today.year, today.month, today.day - 3)),
         isNotNull);
+    expect(past.gridHourlyKwh, hasLength(24), reason: 'hourly figures');
+  });
+
+  test('the app knows the panel is on the generator', () async {
+    await eventually(() => devices.onGenerator == true, 'generator supply');
+    final today = DateTime.now();
+    await eventually(
+        () => (devices.energyHistory.day(today)?.generatorKwh ?? 0) > 0,
+        "today's generator energy",
+        timeout: const Duration(seconds: 20));
   });
 
   test('the panel drops a late ON but still runs a late OFF', () async {

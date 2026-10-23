@@ -42,6 +42,15 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
 - **UEDCL Tariff**: billing category and the rate from your current bill.
   You get a warning when the rate is over 90 days old (ERA adjusts tariffs
   quarterly), and an alert when the daily cost passes a limit you set.
+  - **Time-of-use**: if your bill has peak and off-peak rates, enter them
+    and their hours. Energy is then priced by the hour it was used. The
+    Energy tab shows how your grid energy splits across the periods and
+    what running peak-period work off-peak would have saved. Starting a
+    large machine at peak time shows its cost per hour now and off-peak.
+  - **Standby generator**: with the panel wired to the changeover switch,
+    the app shows when the generator is running and counts its energy,
+    run hours and fuel cost (from your fuel price and litres per kWh)
+    apart from the grid, with its cost per kWh against the grid's.
 
 ## Getting started
 

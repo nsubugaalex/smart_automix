@@ -27,7 +27,8 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
 | `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
-| `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": 1792616405, "last": 1792702795}` | 1 | **yes** |
+| `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": 1792616405, "last": 1792702795, "g": 4.2, "gs": 3600, "h": [24 values]}` | 1 | **yes** |
+| `smartautomix/<panel>/source` | panel → app | `grid` or `generator` | 1 | **yes** |
 
 `state` and `status` payloads are plain text, matched case-insensitively.
 A command's `cmd` is `ON` or `OFF`, and `ts` is when the app sent it, in
@@ -115,6 +116,11 @@ app's history is complete even for days nobody had it open.
   - `first`, `last`: the first and last reading of the day, in seconds
     since 1970. The app marks a day incomplete unless they are within 15
     minutes of its midnights.
+  - `h` (optional): grid kWh in each of the 24 local hours. With it, the
+    app prices the day at time-of-use rates hour by hour.
+  - `g`, `gs` (optional): kWh used while on the standby generator, and
+    seconds on generator. Generator energy is part of `kwh` but not of
+    `h`, and the app prices it at fuel cost, not the UEDCL rate.
 - Publish today's message about once a minute, and the finished day once
   more just after midnight (on reconnecting, if the controller was offline
   then).
@@ -122,6 +128,15 @@ app's history is complete even for days nobody had it open.
   the day.
 - To keep the broker tidy, delete days older than the history you keep by
   publishing an empty retained message to their topic.
+
+### Supply source (optional)
+
+If the panel has a standby generator, publish `grid` or `generator` to
+`source` (retained) whenever the changeover switch moves, and on
+connecting. Read it from an auxiliary contact on the changeover switch.
+The app shows when the generator is running, and counts its energy, run
+time and fuel cost apart from the grid. The meter must be on the load side
+of the changeover, so it measures both supplies.
 
 The app uses the panel's total for a day unless it counted more itself
 (for example, a new controller that started partway through the day).
@@ -203,9 +218,10 @@ The simulator publishes power and meter readings every 5 seconds, using
 the ratings of the app's demo machines plus about 5% random variation.
 It also publishes today's energy total. Add `--history-days 30` to
 publish made-up totals for the last 30 days as well, to fill the app's
-history chart. Use `--interval-s` to change how often, or `--no-sensors`
-to try the app
-without readings.
+history chart. `--generator-hours 19-22` runs on the generator between
+those hours (and gives history days some generator use), to try the
+generator tracking. Use `--interval-s` to change how often, or
+`--no-sensors` to try the app without readings.
 
 Stop it with Ctrl+C and it reports `offline`. If you kill it outright, the
 broker publishes its last will after about 30 seconds.
