@@ -225,7 +225,10 @@ void main() {
     link.telemetry.listen((t) => readings.add(switch (t) {
           MachinePowerReport() => '${t.machineId}:${t.watts}W/${t.amps}A',
           MeterReport() => 'meter:${t.watts}W/${t.kwh}kWh',
-          EnergyDayReport() => 'day:${t.date}:${t.kwh}kWh',
+          EnergyDayReport() =>
+            'day:${t.date}:${t.kwh}kWh/gen ${t.generatorKwh}kWh/'
+                'h${t.gridHourlyKwh?.length}',
+          SupplySourceReport() => 'source:${t.onGenerator ? 'gen' : 'grid'}',
         }));
 
     transport
@@ -238,7 +241,12 @@ void main() {
               kwh: 79.9,
               registerKwh: 48131.6,
               firstAt: DateTime(2026, 10, 21, 0, 0, 5),
-              lastAt: DateTime(2026, 10, 21, 23, 59, 55)))
+              lastAt: DateTime(2026, 10, 21, 23, 59, 55),
+              gridHourlyKwh: List.filled(24, 3),
+              generatorKwh: 7.9,
+              generatorSeconds: 5400))
+      ..deliver(topics.source, 'generator')
+      ..deliver(topics.source, 'solar')
       ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
       ..deliver('${topics.energyDay('')}not-a-date', '{"kwh": 1}');
     await Future<void>.delayed(Duration.zero);
@@ -246,7 +254,8 @@ void main() {
     expect(readings, [
       '4:6800.0W/11.2A',
       'meter:9000.0W/48211.5kWh',
-      'day:2026-10-21:79.9kWh',
+      'day:2026-10-21:79.9kWh/gen 7.9kWh/h24',
+      'source:gen',
     ]);
   });
 }

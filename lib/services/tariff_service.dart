@@ -1,18 +1,27 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../constants/uedcl_tariffs.dart';
+import '../models/energy_prices.dart';
 
 /// Tracks which UEDCL tariff category the facility is billed under and the
 /// current rate (UGX/kWh), so machine running costs can be estimated.
 ///
 /// The rate is user-editable because ERA/UEDCL tariffs change quarterly and
 /// this app has no live feed into UEDCL's billing systems.
-class TariffService extends ChangeNotifier {
+///
+/// Also holds the time-of-use periods (if the bill has them) and what
+/// generator energy costs in fuel, so it can price energy by the hour and
+/// by source ([EnergyPrices]).
+class TariffService extends ChangeNotifier implements EnergyPrices {
   static const _categoryKey = 'tariff_category';
   static const _rateKey = 'tariff_rate_ugx_per_kwh';
   static const _fixedChargeKey = 'tariff_fixed_charge_ugx';
   static const _lastUpdatedKey = 'tariff_last_updated';
   static const _costThresholdKey = 'tariff_daily_cost_alert_threshold_ugx';
+  static const _timeOfUseKey = 'tariff_time_of_use';
+  static const _generatorKey = 'generator_cost';
 
   /// ERA/UEDCL tariffs are reviewed roughly every quarter, so a rate the
   /// user hasn't touched in longer than this is worth flagging as possibly
@@ -27,8 +36,27 @@ class TariffService extends ChangeNotifier {
   double _monthlyFixedCharge = 0.0;
   DateTime? _lastUpdated;
   double? _dailyCostAlertThreshold;
+  TimeOfUse? _timeOfUse;
+  GeneratorCost _generator = const GeneratorCost();
 
   UedclTariffCategory get category => _category;
+
+  /// Time-of-use periods and rates; disabled (a flat [ratePerKwh]) unless
+  /// the user turned them on.
+  TimeOfUse get timeOfUse => _timeOfUse ?? TimeOfUse.off(_ratePerKwh);
+
+  GeneratorCost get generator => _generator;
+
+  /// The grid rate at [time]: the time-of-use rate for that hour, or the
+  /// standard rate.
+  @override
+  double gridRateAt(DateTime time) {
+    final tou = timeOfUse;
+    return tou.rateFor(tou.bandAt(time), _ratePerKwh);
+  }
+
+  @override
+  double get generatorRatePerKwh => _generator.costPerKwh;
   double get ratePerKwh => _ratePerKwh;
   double get monthlyFixedCharge => _monthlyFixedCharge;
   DateTime? get lastUpdated => _lastUpdated;
@@ -52,6 +80,37 @@ class TariffService extends ChangeNotifier {
     final lastUpdatedIso = prefs.getString(_lastUpdatedKey);
     _lastUpdated =
         lastUpdatedIso != null ? DateTime.tryParse(lastUpdatedIso) : null;
+    _timeOfUse = _decode(prefs.getString(_timeOfUseKey), TimeOfUse.fromJson);
+    _generator =
+        _decode(prefs.getString(_generatorKey), GeneratorCost.fromJson) ??
+            const GeneratorCost();
+    notifyListeners();
+  }
+
+  static T? _decode<T>(String? json, T? Function(Object?) fromJson) {
+    if (json == null) return null;
+    try {
+      return fromJson(jsonDecode(json));
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Save the time-of-use periods and rates from the bill.
+  Future<void> saveTimeOfUse(TimeOfUse timeOfUse) async {
+    final problem = timeOfUse.validate();
+    if (problem != null) throw ArgumentError(problem);
+    _timeOfUse = timeOfUse;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_timeOfUseKey, jsonEncode(timeOfUse.toJson()));
+    notifyListeners();
+  }
+
+  /// Save the generator's fuel price and consumption.
+  Future<void> saveGenerator(GeneratorCost generator) async {
+    _generator = generator;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_generatorKey, jsonEncode(generator.toJson()));
     notifyListeners();
   }
 

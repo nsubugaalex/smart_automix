@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/energy_prices.dart';
 import 'energy_log.dart';
 import 'panel/panel_link.dart';
 
@@ -47,9 +48,9 @@ class PowerMonitor extends ChangeNotifier {
     Stream<PanelTelemetry> telemetry, {
     this.maxAge = defaultMaxAge,
     DateTime Function()? clock,
-    double Function()? ratePerKwh,
+    EnergyPrices prices = const FlatPrices(0),
   })  : _now = clock ?? DateTime.now,
-        _rate = ratePerKwh ?? (() => 0) {
+        _prices = prices {
     _sub = telemetry.listen(_onTelemetry);
   }
 
@@ -70,7 +71,8 @@ class PowerMonitor extends ChangeNotifier {
 
   final Duration maxAge;
   final DateTime Function() _now;
-  final double Function() _rate;
+  final EnergyPrices _prices;
+  bool? _onGenerator;
   late final StreamSubscription<PanelTelemetry> _sub;
   final Map<String, PowerReading> _machines = {};
   MeterReading? _meter;
@@ -82,6 +84,10 @@ class PowerMonitor extends ChangeNotifier {
 
   /// Metered energy and cost per day.
   EnergyLog get history => _history;
+
+  /// Whether the panel is on generator power; null if it doesn't report
+  /// its supply source (no changeover contact wired).
+  bool? get onGenerator => _onGenerator;
 
   /// The latest reading for [machineId], or null if none is recent.
   PowerReading? machine(String machineId) {
@@ -144,10 +150,19 @@ class PowerMonitor extends ChangeNotifier {
           registerKwh: report.registerKwh,
           firstAt: report.firstAt,
           lastAt: report.lastAt,
-          ratePerKwh: _rate(),
+          gridHourlyKwh: report.gridHourlyKwh,
+          generatorKwh: report.generatorKwh,
+          generatorSeconds: report.generatorSeconds,
+          prices: _prices,
         );
         if (changed) {
           _saveSoon();
+          notifyListeners();
+        }
+        return;
+      case SupplySourceReport():
+        if (_onGenerator != report.onGenerator) {
+          _onGenerator = report.onGenerator;
           notifyListeners();
         }
         return;
@@ -157,7 +172,10 @@ class PowerMonitor extends ChangeNotifier {
       case MeterReport():
         _meter = MeterReading(watts: report.watts, kwh: report.kwh, at: now);
         final newDay = _history.record(
-            registerKwh: report.kwh, at: now, ratePerKwh: _rate());
+            registerKwh: report.kwh,
+            at: now,
+            prices: _prices,
+            onGenerator: _onGenerator == true);
         final last = _lastSave;
         if (newDay || last == null || now.difference(last) >= saveInterval) {
           _lastSave = now;

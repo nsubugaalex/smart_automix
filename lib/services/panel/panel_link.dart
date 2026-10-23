@@ -64,6 +64,9 @@ class EnergyDayReport extends PanelTelemetry {
     required this.registerKwh,
     required this.firstAt,
     required this.lastAt,
+    this.gridHourlyKwh,
+    this.generatorKwh = 0,
+    this.generatorSeconds = 0,
   });
 
   /// Local calendar date, `YYYY-MM-DD`.
@@ -74,6 +77,23 @@ class EnergyDayReport extends PanelTelemetry {
   final double registerKwh;
   final DateTime firstAt;
   final DateTime lastAt;
+
+  /// Grid energy per local hour (24 values); null from a panel that
+  /// doesn't report it.
+  final List<double>? gridHourlyKwh;
+
+  /// Energy from the standby generator, and how long the panel ran on it.
+  final double generatorKwh;
+  final int generatorSeconds;
+}
+
+/// Whether the panel is supplied by the grid or the standby generator (from
+/// the changeover switch).
+@immutable
+class SupplySourceReport extends PanelTelemetry {
+  const SupplySourceReport({required this.onGenerator});
+
+  final bool onGenerator;
 }
 
 /// The connection between the app and the switch panel.

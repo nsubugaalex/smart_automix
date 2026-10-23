@@ -48,8 +48,7 @@ class DeviceService extends ChangeNotifier {
     this.confirmTimeout = defaultConfirmTimeout,
   })  : _panel = panel ?? PanelService(),
         _ownsPower = power == null {
-    _power = power ??
-        PowerMonitor(_panel.telemetry, ratePerKwh: () => _tariff.ratePerKwh);
+    _power = power ?? PowerMonitor(_panel.telemetry, prices: _tariff);
     _power.addListener(notifyListeners);
     _reportsSub = _panel.stateReports.listen(_onStateReport);
   }
@@ -162,6 +161,10 @@ class DeviceService extends ChangeNotifier {
 
   /// Metered energy and cost per day, from the supply meter.
   EnergyLog get energyHistory => _power.history;
+
+  /// Whether the panel is on generator power; null if it doesn't report
+  /// its supply source.
+  bool? get onGenerator => _power.onGenerator;
 
   /// Cost of [meteredEnergyTodayKwh] at the current tariff, in UGX.
   double? get meteredCostTodayUgx {

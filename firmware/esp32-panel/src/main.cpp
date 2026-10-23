@@ -55,6 +55,10 @@
 #ifndef ENERGY_KEEP_DAYS
 #define ENERGY_KEEP_DAYS 400
 #endif
+#ifndef GENERATOR_PIN
+#define GENERATOR_PIN NO_PIN
+#define GENERATOR_ACTIVE_LOW true
+#endif
 
 #if MQTT_USE_TLS
 static_assert(sizeof(MQTT_CA_CERT) > 1 || MQTT_ALLOW_INSECURE_TLS,
@@ -69,6 +73,7 @@ const String kStatusTopic = kBase + "/status";
 const String kMeterTopic = kBase + "/meter";
 const String kMachinesPrefix = kBase + "/machines/";
 const String kEnergyPrefix = kBase + "/energy/";
+const String kSourceTopic = kBase + "/source";
 
 constexpr size_t kMachineCount = sizeof(MACHINES) / sizeof(MACHINES[0]);
 constexpr uint32_t kReconnectIntervalMs = 5000;
@@ -113,7 +118,8 @@ WiFiClientSecure net;
 #else
 WiFiClient net;
 #endif
-MQTTClient mqtt(512);
+// Room for a day's energy message with its 24 hourly values.
+MQTTClient mqtt(1024);
 
 uint32_t lastConnectAttempt = 0;
 uint32_t lastSensorPublish = 0;
@@ -169,20 +175,63 @@ void publishPower(Machine &m) {
                /*retained=*/false, /*qos=*/0);
 }
 
+// ---- Supply source -----------------------------------------------------------
+
+constexpr uint32_t kSourceDebounceMs = 500;
+bool onGenerator = false;
+bool sourceRaw = false;
+uint32_t sourceChangedAt = 0;
+
+bool hasGeneratorInput() { return GENERATOR_PIN != NO_PIN; }
+
+bool readGenerator() {
+  return (digitalRead(GENERATOR_PIN) == HIGH) != GENERATOR_ACTIVE_LOW;
+}
+
+void publishSource() {
+  if (!hasGeneratorInput() || !mqtt.connected()) return;
+  mqtt.publish(kSourceTopic, onGenerator ? "generator" : "grid",
+               /*retained=*/true, /*qos=*/1);
+}
+
+// Follow the changeover switch, debounced.
+void watchSource(uint32_t now) {
+  if (!hasGeneratorInput()) return;
+  const bool raw = readGenerator();
+  if (raw != sourceRaw) {
+    sourceRaw = raw;
+    sourceChangedAt = now;
+    return;
+  }
+  if (raw == onGenerator || now - sourceChangedAt < kSourceDebounceMs) return;
+  onGenerator = raw;
+  log(raw ? "supply: generator" : "supply: grid");
+  publishSource();
+}
+
 // ---- Daily energy ------------------------------------------------------------
 //
 // The controller is always on, so it keeps the day-by-day energy total for
 // the app: each meter reading adds the register increase since the last one
 // to the current local day. Each day is a retained message on
 // energy/<YYYY-MM-DD>, so the app gets the whole history when it connects.
+// Grid energy is split by local hour, so the app can price it at
+// time-of-use rates; energy while on the generator is counted apart.
 
 struct EnergyDay {
   char date[11] = "";  // local date, YYYY-MM-DD; empty = none yet
-  double kwh = 0;
+  double kwh = 0;      // grid and generator
   double lastRegKwh = 0;
   int64_t firstAt = 0;  // first and last reading, seconds since 1970
   int64_t lastAt = 0;
+  float gridHourlyKwh[24] = {};
+  double generatorKwh = 0;
+  uint32_t generatorSeconds = 0;
 };
+
+// Readings further apart than this are a gap (controller off), not
+// generator run time.
+constexpr int64_t kMaxReadingGapS = 10 * 60;
 
 Preferences energyStore;
 EnergyDay energyToday;
@@ -218,11 +267,20 @@ void loadEnergy() {
 
 bool publishEnergyDay(const EnergyDay &day) {
   if (day.date[0] == '\0' || !mqtt.connected()) return false;
-  char payload[128];
-  snprintf(payload, sizeof(payload),
-           "{\"kwh\":%.3f,\"reg\":%.3f,\"first\":%lld,\"last\":%lld}",
-           day.kwh, day.lastRegKwh, static_cast<long long>(day.firstAt),
-           static_cast<long long>(day.lastAt));
+  char payload[640];
+  int n = snprintf(
+      payload, sizeof(payload),
+      "{\"kwh\":%.3f,\"reg\":%.3f,\"first\":%lld,\"last\":%lld,"
+      "\"g\":%.3f,\"gs\":%lu,\"h\":[",
+      day.kwh, day.lastRegKwh, static_cast<long long>(day.firstAt),
+      static_cast<long long>(day.lastAt), day.generatorKwh,
+      static_cast<unsigned long>(day.generatorSeconds));
+  for (int h = 0; h < 24 && n < static_cast<int>(sizeof(payload)); h++) {
+    n += snprintf(payload + n, sizeof(payload) - n, h ? ",%.3f" : "%.3f",
+                  day.gridHourlyKwh[h]);
+  }
+  if (n >= static_cast<int>(sizeof(payload)) - 2) return false;
+  strcpy(payload + n, "]}");
   return mqtt.publish(kEnergyPrefix + day.date, payload, /*retained=*/true,
                       /*qos=*/1);
 }
@@ -268,7 +326,19 @@ void recordEnergy(double registerKwh, uint32_t nowMs) {
   // A register that went backwards was replaced or reset: carry on from
   // its new value without adding anything.
   if (registerKwh > energyToday.lastRegKwh) {
-    energyToday.kwh += registerKwh - energyToday.lastRegKwh;
+    const double added = registerKwh - energyToday.lastRegKwh;
+    energyToday.kwh += added;
+    if (onGenerator) {
+      energyToday.generatorKwh += added;
+    } else {
+      tm local;
+      localtime_r(&now, &local);
+      energyToday.gridHourlyKwh[local.tm_hour] += added;
+    }
+  }
+  const int64_t gap = now - energyToday.lastAt;
+  if (onGenerator && gap > 0 && gap <= kMaxReadingGapS) {
+    energyToday.generatorSeconds += gap;
   }
   energyToday.lastRegKwh = registerKwh;
   energyToday.lastAt = now;
@@ -428,6 +498,7 @@ void connectMqtt() {
   mqtt.publish(kStatusTopic, "online", /*retained=*/true, /*qos=*/1);
   // Tell the app the real state of every machine straight away.
   for (auto &m : machines) publishState(m);
+  publishSource();
   publishEnergy(millis());
   log("online as panel " PANEL_ID);
 }
@@ -559,6 +630,10 @@ void setup() {
       m.feedbackOn = m.feedbackRaw = readFeedback(m);
     }
   }
+  if (hasGeneratorInput()) {
+    pinMode(GENERATOR_PIN, INPUT_PULLUP);
+    onGenerator = sourceRaw = readGenerator();
+  }
 
   Serial.begin(115200);
   log("SMART-AUTOMIX panel " PANEL_ID " starting, all machines OFF");
@@ -615,6 +690,7 @@ void loop() {
   processRequests(now);
   processConfirmations(now);
   watchFeedback(now);
+  watchSource(now);
   stepSensors(now);
   delay(10);
 }

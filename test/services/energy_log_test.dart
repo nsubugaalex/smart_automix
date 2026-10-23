@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smart_automix/models/energy_prices.dart';
 import 'package:smart_automix/services/energy_log.dart';
 import 'package:smart_automix/services/panel/panel_link.dart';
 import 'package:smart_automix/services/power_monitor.dart';
@@ -14,7 +15,7 @@ void main() {
     setUp(() => log = EnergyLog());
 
     void read(double kwh, DateTime at, {double rate = 1000}) =>
-        log.record(registerKwh: kwh, at: at, ratePerKwh: rate);
+        log.record(registerKwh: kwh, at: at, prices: FlatPrices(rate));
 
     test('adds each increase to its day, priced at the rate of the time', () {
       read(100, DateTime(2026, 10, 7, 8));
@@ -102,7 +103,7 @@ void main() {
               registerKwh: reg,
               firstAt: first,
               lastAt: last,
-              ratePerKwh: 1000);
+              prices: FlatPrices(1000));
 
       test('fill a day the app never saw, priced at the current rate', () {
         panelDay('2026-10-06', 80, 1080,
@@ -162,10 +163,94 @@ void main() {
 
       expect(
         log.toCsv(now: DateTime(2026, 10, 7, 10)),
-        'date,kwh,cost_ugx,first_reading,last_reading,complete\n'
-        '2026-10-06,20.00,20000,00:02,23:58,yes\n'
-        '2026-10-07,10.25,10250,08:30,09:00,no\n',
+        'date,kwh,cost_ugx,generator_kwh,generator_cost_ugx,'
+        'generator_hours,first_reading,last_reading,complete\n'
+        '2026-10-06,20.00,20000,0.00,0,0.00,00:02,23:58,yes\n'
+        '2026-10-07,10.25,10250,0.00,0,0.00,08:30,09:00,no\n',
       );
+    });
+
+    group('time of use and generator', () {
+      // Peak 18-24 at 1000, off-peak 0-6 at 300, shoulder 600; fuel 1750.
+      const tou = TimeOfUse(enabled: true, peakRate: 1000, offPeakRate: 300);
+      final prices = _TouPrices(tou, standard: 600, generator: 1750);
+
+      void at(double kwh, DateTime t, {bool generator = false}) => log.record(
+          registerKwh: kwh, at: t, prices: prices, onGenerator: generator);
+
+      test('grid energy is priced and filed by the hour it was used', () {
+        at(100, DateTime(2026, 10, 7, 5));
+        at(102, DateTime(2026, 10, 7, 5, 30));
+        at(105, DateTime(2026, 10, 7, 12));
+        at(106, DateTime(2026, 10, 7, 19));
+        final day = log.day(DateTime(2026, 10, 7))!;
+        expect(day.costUgx, closeTo(2 * 300 + 3 * 600 + 1 * 1000, 1e-6));
+        expect(day.gridHourlyKwh![5], 2);
+        expect(day.gridHourlyKwh![12], 3);
+        expect(day.gridHourlyKwh![19], 1);
+      });
+
+      test('generator energy is counted apart, at fuel cost, with run time',
+          () {
+        final t = DateTime(2026, 10, 7, 19);
+        at(100, t);
+        at(104, t.add(const Duration(minutes: 5)), generator: true);
+        at(106, t.add(const Duration(minutes: 10)), generator: true);
+        // A long gap (app closed) isn't counted as run time.
+        at(107, t.add(const Duration(hours: 2)), generator: true);
+        final day = log.day(t)!;
+        expect(day.generatorKwh, 7);
+        expect(day.generatorCostUgx, closeTo(7 * 1750, 1e-6));
+        expect(day.generatorSeconds, 600);
+        expect(day.gridKwh, 0);
+        expect(day.gridHourlyKwh!.every((h) => h == 0), isTrue);
+      });
+
+      test('a panel day with hourly figures is priced hour by hour', () {
+        log.applyPanelDay(
+          date: '2026-10-06',
+          kwh: 13,
+          registerKwh: 1013,
+          firstAt: DateTime(2026, 10, 6, 0, 0, 5),
+          lastAt: DateTime(2026, 10, 6, 23, 59, 55),
+          gridHourlyKwh: [
+            for (var h = 0; h < 24; h++) h == 3 ? 4.0 : (h == 20 ? 5.0 : 0.0)
+          ],
+          generatorKwh: 4,
+          generatorSeconds: 3600,
+          prices: prices,
+        );
+        final day = log.day(DateTime(2026, 10, 6))!;
+        expect(day.gridCostUgx, closeTo(4 * 300 + 5 * 1000, 1e-6));
+        expect(day.generatorCostUgx, closeTo(4 * 1750, 1e-6));
+        expect(day.generatorSeconds, 3600);
+      });
+
+      test('the same day arriving again on reconnect is not re-priced', () {
+        void deliver(EnergyPrices p) => log.applyPanelDay(
+              date: '2026-10-06',
+              kwh: 10,
+              registerKwh: 1010,
+              firstAt: DateTime(2026, 10, 6, 0, 0, 5),
+              lastAt: DateTime(2026, 10, 6, 23, 59, 55),
+              gridHourlyKwh: List.filled(24, 10 / 24),
+              prices: p,
+            );
+        deliver(const FlatPrices(500));
+        deliver(const FlatPrices(900)); // the rate changed since
+        expect(log.day(DateTime(2026, 10, 6))!.costUgx, closeTo(5000, 1e-6));
+      });
+
+      test('hourly and generator figures survive a JSON round trip', () {
+        at(100, DateTime(2026, 10, 7, 9));
+        at(103, DateTime(2026, 10, 7, 9, 5), generator: true);
+        at(105, DateTime(2026, 10, 7, 10));
+        final copy =
+            EnergyLog.fromJson(log.toJson()).day(DateTime(2026, 10, 7))!;
+        expect(copy.gridHourlyKwh![10], 2);
+        expect(copy.generatorKwh, 3);
+        expect(copy.generatorSeconds, 300);
+      });
     });
   });
 
@@ -181,7 +266,7 @@ void main() {
 
     Future<PowerMonitor> create() async {
       final m = PowerMonitor(telemetry.stream,
-          clock: () => now, ratePerKwh: () => 900);
+          clock: () => now, prices: const FlatPrices(900));
       await m.init();
       return m;
     }
@@ -241,4 +326,18 @@ void main() {
       monitor.dispose();
     });
   });
+}
+
+class _TouPrices implements EnergyPrices {
+  _TouPrices(this.tou, {required this.standard, required this.generator});
+
+  final TimeOfUse tou;
+  final double standard;
+  final double generator;
+
+  @override
+  double gridRateAt(DateTime time) => tou.rateFor(tou.bandAt(time), standard);
+
+  @override
+  double get generatorRatePerKwh => generator;
 }

@@ -64,6 +64,16 @@
 // normal operation.
 #define PZEM_SET_ADDRESS 0
 
+// ---- Generator ---------------------------------------------------------------
+
+// Optional: a GPIO reading an auxiliary contact on the changeover switch
+// that closes when the load is on the generator, wired to GND (the input
+// uses the internal pull-up). Lets the app count generator energy and run
+// hours apart from the grid. NO_PIN if there's no generator.
+#define GENERATOR_PIN NO_PIN
+// true: the contact pulls the pin LOW when on generator.
+#define GENERATOR_ACTIVE_LOW true
+
 // ---- Machines ----------------------------------------------------------------
 
 // These match the app's demo machines. Use your machine IDs from the app.

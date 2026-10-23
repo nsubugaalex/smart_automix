@@ -27,6 +27,9 @@
 //   --no-sensors        Don't publish power or meter readings
 //   --history-days <n>  Also publish made-up daily energy totals for the
 //                       last n days, to fill the app's history chart
+//   --generator-hours <a-b>  Run on the standby generator from hour a to
+//                       hour b (local time, e.g. 19-22), like an evening
+//                       outage; history days get some generator use too
 //
 // Power readings use the ratings of the app's demo machines (IDs 1-6);
 // any other machine ID is treated as a 1 kW single-phase load.
@@ -130,7 +133,25 @@ Future<void> main(List<String> args) async {
           kwh: d.kwh,
           registerKwh: d.registerKwh,
           firstAt: d.firstAt,
-          lastAt: d.lastAt));
+          lastAt: d.lastAt,
+          gridHourlyKwh: d.gridHourlyKwh,
+          generatorKwh: d.generatorKwh,
+          generatorSeconds: d.generatorSeconds));
+
+  // Supply source, like the changeover contact on the firmware.
+  final generatorHours = _hourRange(options['generator-hours']);
+  bool onGeneratorAt(DateTime t) =>
+      generatorHours != null &&
+      (generatorHours.$1 < generatorHours.$2
+          ? t.hour >= generatorHours.$1 && t.hour < generatorHours.$2
+          : t.hour >= generatorHours.$1 || t.hour < generatorHours.$2);
+  var onGenerator = onGeneratorAt(DateTime.now());
+  if (generatorHours != null) {
+    publish(
+        topics.source, onGenerator ? PanelTopics.generator : PanelTopics.grid);
+    _log('on generator from ${generatorHours.$1}:00 to '
+        '${generatorHours.$2}:00 (now: ${onGenerator ? 'generator' : 'grid'})');
+  }
 
   final historyDays = int.tryParse(options['history-days'] ?? '') ?? 0;
   if (sensors && historyDays > 0) {
@@ -139,7 +160,25 @@ Future<void> main(List<String> args) async {
     for (var i = 1; i <= historyDays; i++) {
       final date = DateTime(today.year, today.month, today.day - i);
       final weekend = date.weekday >= DateTime.saturday;
-      final kwh = (weekend ? 15 : 55) + random.nextDouble() * 30;
+      // A workshop day: mostly 08:00-18:00, some evening work, a base load.
+      final hourly = [
+        for (var h = 0; h < 24; h++)
+          (h >= 8 && h < 18
+                  ? (weekend ? 1.5 : 5.0)
+                  : (h >= 18 && h < 21 ? 2.0 : 0.6)) *
+              (0.8 + random.nextDouble() * 0.4)
+      ];
+      // Now and then an evening outage, bridged by the generator.
+      var generatorKwh = 0.0;
+      var generatorSeconds = 0;
+      if (generatorHours != null && random.nextDouble() < 0.4) {
+        for (final h in [19, 20]) {
+          generatorKwh += hourly[h];
+          hourly[h] = 0;
+        }
+        generatorSeconds = 2 * 3600;
+      }
+      final kwh = hourly.fold(0.0, (a, b) => a + b) + generatorKwh;
       register -= kwh;
       publishEnergyDay(_EnergyDay(
         date: _EnergyDay.dateKey(date),
@@ -147,6 +186,9 @@ Future<void> main(List<String> args) async {
         registerKwh: register + kwh,
         firstAt: date.add(const Duration(seconds: 5)),
         lastAt: date.add(const Duration(hours: 23, minutes: 59, seconds: 55)),
+        gridHourlyKwh: hourly,
+        generatorKwh: generatorKwh,
+        generatorSeconds: generatorSeconds,
       ));
     }
     _log('published made-up energy totals for the last $historyDays days');
@@ -173,11 +215,18 @@ Future<void> main(List<String> args) async {
         retain: false);
 
     final now = DateTime.now();
+    final generatorNow = onGeneratorAt(now);
+    if (generatorNow != onGenerator) {
+      onGenerator = generatorNow;
+      publish(topics.source,
+          onGenerator ? PanelTopics.generator : PanelTopics.grid);
+      _log('supply: ${onGenerator ? 'generator' : 'grid'}');
+    }
     if (_EnergyDay.dateKey(now) != day.date) {
       publishEnergyDay(day); // the finished day
       day = _EnergyDay.start(now, meter.kwh);
     } else {
-      day = day.advance(now, meter.kwh);
+      day = day.advance(now, meter.kwh, onGenerator: onGenerator);
     }
     publishEnergyDay(day);
   }
@@ -259,6 +308,18 @@ void _log(String message) {
   stdout.writeln('[$time] $message');
 }
 
+/// Parse `a-b` (hours 0-24) into a range, or null.
+(int, int)? _hourRange(String? value) {
+  final parts = (value ?? '').split('-');
+  if (parts.length != 2) return null;
+  final a = int.tryParse(parts[0]);
+  final b = int.tryParse(parts[1]);
+  if (a == null || b == null || a < 0 || a > 23 || b < 1 || b > 24 || a == b) {
+    return null;
+  }
+  return (a, b);
+}
+
 Set<String> _idList(String? value) => (value ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -303,6 +364,9 @@ class _EnergyDay {
     required this.registerKwh,
     required this.firstAt,
     required this.lastAt,
+    required this.gridHourlyKwh,
+    this.generatorKwh = 0,
+    this.generatorSeconds = 0,
   });
 
   _EnergyDay.start(DateTime now, double register)
@@ -311,7 +375,8 @@ class _EnergyDay {
             kwh: 0,
             registerKwh: register,
             firstAt: now,
-            lastAt: now);
+            lastAt: now,
+            gridHourlyKwh: List.filled(24, 0));
 
   static String dateKey(DateTime t) =>
       '${t.year}-${t.month.toString().padLeft(2, '0')}-'
@@ -322,14 +387,27 @@ class _EnergyDay {
   final double registerKwh;
   final DateTime firstAt;
   final DateTime lastAt;
+  final List<double> gridHourlyKwh;
+  final double generatorKwh;
+  final int generatorSeconds;
 
-  _EnergyDay advance(DateTime now, double register) => _EnergyDay(
-        date: date,
-        kwh: kwh + max(0, register - registerKwh),
-        registerKwh: register,
-        firstAt: firstAt,
-        lastAt: now,
-      );
+  _EnergyDay advance(DateTime now, double register,
+      {required bool onGenerator}) {
+    final added = max(0.0, register - registerKwh);
+    final hourly = [...gridHourlyKwh];
+    if (!onGenerator) hourly[now.hour] += added;
+    return _EnergyDay(
+      date: date,
+      kwh: kwh + added,
+      registerKwh: register,
+      firstAt: firstAt,
+      lastAt: now,
+      gridHourlyKwh: hourly,
+      generatorKwh: generatorKwh + (onGenerator ? added : 0),
+      generatorSeconds: generatorSeconds +
+          (onGenerator ? now.difference(lastAt).inSeconds : 0),
+    );
+  }
 }
 
 class _Meter {

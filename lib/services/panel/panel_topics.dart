@@ -12,7 +12,8 @@ import 'dart:convert';
 /// | `smartautomix/<panel>/status`              | panel → app | `online` / `offline` (last will) | yes |
 /// | `smartautomix/<panel>/machines/<id>/power` | panel → app | `{"w": 7100, "a": 12.4}` | no |
 /// | `smartautomix/<panel>/meter`               | panel → app | `{"w": 15200, "kwh": 48211.7}` | no |
-/// | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": <s>, "last": <s>}` | yes |
+/// | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": <s>, "last": <s>, "h": [24 × kWh], "g": 4.2, "gs": 3600}` | yes |
+/// | `smartautomix/<panel>/source`              | panel → app | `grid` / `generator` | yes |
 class PanelTopics {
   PanelTopics(this.panelId) {
     if (!isValidPanelId(panelId)) {
@@ -26,6 +27,8 @@ class PanelTopics {
   static const off = 'OFF';
   static const online = 'online';
   static const offline = 'offline';
+  static const grid = 'grid';
+  static const generator = 'generator';
 
   final String panelId;
 
@@ -41,6 +44,9 @@ class PanelTopics {
 
   /// The panel's supply meter: total power and the cumulative kWh register.
   String get meter => '$_base/meter';
+
+  /// Grid or generator supply, from the changeover switch (retained).
+  String get source => '$_base/source';
 
   String get _energy => '$_base/energy/';
 
@@ -143,11 +149,32 @@ class PanelTopics {
     return (watts: watts, kwh: kwh);
   }
 
-  /// Parse an energy-day payload: `{"kwh", "reg", "first", "last"}`
-  /// with the times in seconds since 1970. Null if invalid, or empty (the
-  /// panel deleting a day that dropped out of its history).
-  static ({double kwh, double registerKwh, DateTime firstAt, DateTime lastAt})?
-      parseEnergyDay(String payload) {
+  /// Parse a `source` payload: true for `generator`, false for `grid`,
+  /// null if invalid.
+  static bool? parseSource(String payload) {
+    switch (payload.trim().toLowerCase()) {
+      case generator:
+        return true;
+      case grid:
+        return false;
+    }
+    return null;
+  }
+
+  /// Parse an energy-day payload: `{"kwh", "reg", "first", "last"}` with
+  /// the times in seconds since 1970, and optionally `h` (grid kWh for
+  /// each of the 24 local hours), `g` (generator kWh) and `gs` (seconds on
+  /// generator). Null if invalid, or empty (the panel deleting a day that
+  /// dropped out of its history).
+  static ({
+    double kwh,
+    double registerKwh,
+    DateTime firstAt,
+    DateTime lastAt,
+    List<double>? gridHourlyKwh,
+    double generatorKwh,
+    int generatorSeconds,
+  })? parseEnergyDay(String payload) {
     final json = _decodeObject(payload);
     final kwh = _nonNegative(json?['kwh']);
     final reg = _nonNegative(json?['reg']);
@@ -157,11 +184,21 @@ class PanelTopics {
       return null;
     }
     if (first <= 0 || last < first) return null;
+    final h = json!['h'];
+    final hourly = h is List && h.length == 24
+        ? [for (final v in h) _nonNegative(v)]
+        : null;
+    final gs = json['gs'];
     return (
       kwh: kwh,
       registerKwh: reg,
       firstAt: DateTime.fromMillisecondsSinceEpoch(first * 1000),
       lastAt: DateTime.fromMillisecondsSinceEpoch(last * 1000),
+      gridHourlyKwh: hourly == null || hourly.contains(null)
+          ? null
+          : hourly.cast<double>(),
+      generatorKwh: _nonNegative(json['g']) ?? 0,
+      generatorSeconds: gs is int && gs > 0 ? gs : 0,
     );
   }
 
@@ -170,12 +207,19 @@ class PanelTopics {
     required double registerKwh,
     required DateTime firstAt,
     required DateTime lastAt,
+    List<double>? gridHourlyKwh,
+    double generatorKwh = 0,
+    int generatorSeconds = 0,
   }) =>
       jsonEncode({
         'kwh': _round(kwh, 3),
         'reg': _round(registerKwh, 3),
         'first': firstAt.millisecondsSinceEpoch ~/ 1000,
         'last': lastAt.millisecondsSinceEpoch ~/ 1000,
+        if (gridHourlyKwh != null)
+          'h': [for (final v in gridHourlyKwh) _round(v, 3)],
+        'g': _round(generatorKwh, 3),
+        'gs': generatorSeconds,
       });
 
   static String encodePower({required double watts, required double amps}) =>

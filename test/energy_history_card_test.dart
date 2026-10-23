@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_automix/models/energy_prices.dart';
 import 'package:smart_automix/services/energy_log.dart';
 import 'package:smart_automix/widgets/common/energy_history_card.dart';
 
@@ -26,12 +27,12 @@ void main() {
       log.record(
           registerKwh: register,
           at: DateTime(2026, 10, day, 0, 1),
-          ratePerKwh: 1000);
+          prices: FlatPrices(1000));
       register += kwh;
       log.record(
           registerKwh: register,
           at: DateTime(2026, 10, day, 23, 59),
-          ratePerKwh: 1000);
+          prices: FlatPrices(1000));
     });
     return log;
   }
