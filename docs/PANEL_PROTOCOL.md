@@ -29,6 +29,8 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
 | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": 1792616405, "last": 1792702795, "g": 4.2, "gs": 3600, "h": [24 values]}` | 1 | **yes** |
 | `smartautomix/<panel>/source` | panel → app | `grid` or `generator` | 1 | **yes** |
+| `smartautomix/<panel>/supply` | panel → app | `{"state": "undervoltage", "since": 1792616405}` | 1 | **yes** |
+| `smartautomix/<panel>/supply/events` | panel → app | `[{"kind": "outage", "phase": 1, "from": …, "to": …, "min": 0, "max": 0}]` | 1 | **yes** |
 
 `state` and `status` payloads are plain text, matched case-insensitively.
 A command's `cmd` is `ON` or `OFF`, and `ts` is when the app sent it, in
@@ -129,6 +131,33 @@ app's history is complete even for days nobody had it open.
 - To keep the broker tidy, delete days older than the history you keep by
   publishing an empty retained message to their topic.
 
+### Supply protection (optional)
+
+With an incomer meter, the controller should protect the machines from a
+bad supply on its own, without needing the app or the network:
+
+- **Watch each phase's voltage.** Add the voltages to the `meter` message as
+  `"v": [231.0, 229.4, 230.2]` (one per phase; 0 for a phase that didn't
+  answer).
+- **Trip** when the supply stays out of range for a few seconds (long
+  enough to ride through a motor's start-up dip): low voltage, high
+  voltage, a lost phase, or every phase dead. Switch every machine off
+  (publishing their states as usual) and refuse starts.
+- **Allow starts again** only once the supply has been back in range and
+  steady for a while. Never restart machines automatically. Start in the
+  `settling` state after power-up for the same reason.
+- **`supply`** (retained): the state, one of `ok`, `settling`,
+  `undervoltage`, `overvoltage`, `phase_loss`, `outage`, and `since`, when
+  it began (seconds since 1970, 0 if the clock isn't set).
+- **`supply/events`** (retained): the recent faults and power cuts, oldest
+  first: `kind` (as above), `phase` (1-3), `from` and `to` (seconds since
+  1970; `to` is 0 while it lasts) and the lowest and highest voltage seen.
+  Log a power cut that switched the controller off too, once it is back.
+
+The app shows the state on the Dashboard and Control tabs, refuses starts
+while the panel would, and alerts on faults. It keeps a longer log than
+the controller, and can copy it as CSV for a complaint to UEDCL.
+
 ### Supply source (optional)
 
 If the panel has a standby generator, publish `grid` or `generator` to
@@ -218,7 +247,11 @@ The simulator publishes power and meter readings every 5 seconds, using
 the ratings of the app's demo machines plus about 5% random variation.
 It also publishes today's energy total. Add `--history-days 30` to
 publish made-up totals for the last 30 days as well, to fill the app's
-history chart. `--generator-hours 19-22` runs on the generator between
+history chart (and adds a few past power cuts to the supply log).
+`--supply-fault undervoltage:30:20` simulates 20 s of low voltage starting
+30 s after launch (also `overvoltage`, `phase_loss`, `outage`), to see
+supply protection trip and recover; `--trip-delay-s` and `--stable-s`
+shorten its timings. `--generator-hours 19-22` runs on the generator between
 those hours (and gives history days some generator use), to try the
 generator tracking. Use `--interval-s` to change how often, or
 `--no-sensors` to try the app without readings.

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../models/supply.dart';
+
 /// How the app is currently linked to the switch-panel hardware.
 enum PanelLinkStatus {
   /// No hardware: commands are applied locally (demo / development mode).
@@ -48,10 +50,30 @@ class MachinePowerReport extends PanelTelemetry {
 /// and the meter's cumulative energy register.
 @immutable
 class MeterReport extends PanelTelemetry {
-  const MeterReport({required this.watts, required this.kwh});
+  const MeterReport({required this.watts, required this.kwh, this.volts});
 
   final double watts;
   final double kwh;
+
+  /// Voltage of each incomer phase; null for a phase that didn't answer.
+  final List<double?>? volts;
+}
+
+/// The panel's supply protection state.
+@immutable
+class SupplyStatusReport extends PanelTelemetry {
+  const SupplyStatusReport({required this.state, this.since});
+
+  final SupplyState state;
+  final DateTime? since;
+}
+
+/// The panel's recent supply faults and power cuts.
+@immutable
+class SupplyEventsReport extends PanelTelemetry {
+  const SupplyEventsReport(this.events);
+
+  final List<SupplyEvent> events;
 }
 
 /// One day's energy through the supply meter, as totalled by the panel.

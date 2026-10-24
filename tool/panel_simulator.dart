@@ -27,6 +27,13 @@
 //   --no-sensors        Don't publish power or meter readings
 //   --history-days <n>  Also publish made-up daily energy totals for the
 //                       last n days, to fill the app's history chart
+//   --supply-fault <kind>:<start>:<length>  Simulate a supply fault
+//                       (undervoltage, overvoltage, phase_loss or outage)
+//                       starting <start> s after launch, lasting <length> s,
+//                       to see supply protection switch machines off
+//   --trip-delay-s <s>  How long a fault must last before tripping (default 5)
+//   --stable-s <s>      How long the supply must be steady before starts
+//                       are allowed again (default 60)
 //   --generator-hours <a-b>  Run on the standby generator from hour a to
 //                       hour b (local time, e.g. 19-22), like an evening
 //                       outage; history days get some generator use too
@@ -43,6 +50,7 @@ import 'dart:math';
 
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:smart_automix/models/supply.dart';
 import 'package:smart_automix/services/panel/panel_topics.dart';
 
 Future<void> main(List<String> args) async {
@@ -124,6 +132,136 @@ Future<void> main(List<String> args) async {
       _Meter(kwh: double.tryParse(options['meter-start'] ?? '') ?? 48210.0);
   final random = Random();
 
+  // Supply protection, like the firmware: trip after the fault has lasted
+  // tripDelay, allow starts again once the supply has been steady for
+  // stable. Never restarts machines.
+  final fault = _parseFault(options['supply-fault']);
+  final started = DateTime.now();
+  final tripDelay =
+      Duration(seconds: int.tryParse(options['trip-delay-s'] ?? '') ?? 5);
+  final stable =
+      Duration(seconds: int.tryParse(options['stable-s'] ?? '') ?? 60);
+  var supply = SupplyState.ok;
+  SupplyState? pendingFault;
+  DateTime? faultSince, okSince;
+  final supplyEvents = <SupplyEvent>[];
+
+  void publishSupply() => publish(
+      topics.supply, PanelTopics.encodeSupply(supply, since: DateTime.now()));
+  void publishSupplyEvents() => publish(
+      topics.supplyEvents, PanelTopics.encodeSupplyEvents(supplyEvents));
+
+  List<double?> phaseVolts(DateTime now) {
+    double normal() => 228 + random.nextDouble() * 6;
+    final elapsed = now.difference(started);
+    final active = fault != null &&
+        elapsed >= fault.start &&
+        elapsed < fault.start + fault.length;
+    if (!active) return [normal(), normal(), normal()];
+    return switch (fault.kind) {
+      SupplyState.undervoltage => [
+          normal(),
+          180 + random.nextDouble() * 4,
+          normal()
+        ],
+      SupplyState.overvoltage => [
+          normal(),
+          normal(),
+          262 + random.nextDouble() * 4
+        ],
+      SupplyState.phaseLoss => [normal(), normal(), null],
+      _ => [null, null, null],
+    };
+  }
+
+  SupplyState classify(List<double?> v) {
+    final live = v.where((x) => x != null && x >= 100).length;
+    if (live == 0) return SupplyState.outage;
+    if (v.any((x) => x == null || x < 100)) return SupplyState.phaseLoss;
+    if (v.any((x) => x! < 200)) return SupplyState.undervoltage;
+    if (v.any((x) => x! > 255)) return SupplyState.overvoltage;
+    return SupplyState.ok;
+  }
+
+  int faultPhase(List<double?> v, SupplyState kind) {
+    for (var i = 0; i < v.length; i++) {
+      final x = v[i];
+      final bad = switch (kind) {
+        SupplyState.undervoltage => x != null && x < 200,
+        SupplyState.overvoltage => x != null && x > 255,
+        _ => x == null || x < 100,
+      };
+      if (bad) return i + 1;
+    }
+    return 1;
+  }
+
+  void checkSupply(List<double?> volts, DateTime now) {
+    final seen = classify(volts);
+    if (seen != SupplyState.ok) {
+      okSince = null;
+      if (supply.isFault) {
+        final e = supplyEvents.last;
+        final v = volts[e.phase - 1] ?? 0;
+        supplyEvents.last = SupplyEvent(
+            kind: e.kind,
+            phase: e.phase,
+            from: e.from,
+            to: null,
+            minVolts: min(e.minVolts, v),
+            maxVolts: max(e.maxVolts, v));
+        return;
+      }
+      if (pendingFault != seen) {
+        pendingFault = seen;
+        faultSince = now;
+        return;
+      }
+      if (now.difference(faultSince!) < tripDelay) return;
+      supply = seen;
+      final phase = faultPhase(volts, seen);
+      final v = volts[phase - 1] ?? 0;
+      supplyEvents.add(SupplyEvent(
+          kind: seen,
+          phase: phase,
+          from: now,
+          to: null,
+          minVolts: v,
+          maxVolts: v));
+      if (supplyEvents.length > 16) supplyEvents.removeAt(0);
+      for (final id in running.toList()) {
+        running.remove(id);
+        publish(topics.state(id), PanelTopics.off);
+      }
+      _log('SUPPLY FAULT: ${seen.wireName} on phase $phase, all machines '
+          'switched off');
+      publishSupply();
+      publishSupplyEvents();
+      return;
+    }
+    pendingFault = null;
+    if (supply.isFault) {
+      final e = supplyEvents.last;
+      supplyEvents.last = SupplyEvent(
+          kind: e.kind,
+          phase: e.phase,
+          from: e.from,
+          to: now,
+          minVolts: e.minVolts,
+          maxVolts: e.maxVolts);
+      supply = SupplyState.settling;
+      okSince = now;
+      _log('supply back in range; starts allowed once it has been steady');
+      publishSupply();
+      publishSupplyEvents();
+    } else if (supply == SupplyState.settling &&
+        now.difference(okSince!) >= stable) {
+      supply = SupplyState.ok;
+      _log('supply steady: starts allowed');
+      publishSupply();
+    }
+  }
+
   // Today's energy, kept like the firmware does: register increases since
   // the first reading of the (local) day.
   var day = _EnergyDay.start(DateTime.now(), meter.kwh);
@@ -192,6 +330,27 @@ Future<void> main(List<String> args) async {
       ));
     }
     _log('published made-up energy totals for the last $historyDays days');
+
+    // A few past power cuts and a low-voltage spell for the supply log.
+    for (final daysAgo in [2, 5, 9, 16]) {
+      if (daysAgo > historyDays) continue;
+      final from = DateTime(today.year, today.month, today.day - daysAgo,
+          9 + random.nextInt(10), random.nextInt(60));
+      final low = daysAgo == 5;
+      supplyEvents.add(SupplyEvent(
+        kind: low ? SupplyState.undervoltage : SupplyState.outage,
+        phase: low ? 2 : 1,
+        from: from,
+        to: from.add(Duration(minutes: 10 + random.nextInt(110))),
+        minVolts: low ? 181 : 0,
+        maxVolts: low ? 199 : 0,
+      ));
+    }
+    supplyEvents.sort((a, b) => a.from!.compareTo(b.from!));
+  }
+  if (sensors) {
+    publishSupply();
+    publishSupplyEvents();
   }
   void publishReadings() {
     var total = _Meter.baseLoadWatts * _jitter(random);
@@ -210,11 +369,18 @@ Future<void> main(List<String> args) async {
               watts: watts, amps: rating.ratedAmps * factor),
           retain: false);
     }
-    meter.advance(total);
-    publish(topics.meter, PanelTopics.encodeMeter(watts: total, kwh: meter.kwh),
-        retain: false);
-
     final now = DateTime.now();
+    final volts = phaseVolts(now);
+    meter.advance(total);
+    publish(
+        topics.meter,
+        PanelTopics.encodeMeter(
+            watts: total,
+            kwh: meter.kwh,
+            volts: [for (final v in volts) v ?? 0]),
+        retain: false);
+    checkSupply(volts, now);
+
     final generatorNow = onGeneratorAt(now);
     if (generatorNow != onGenerator) {
       onGenerator = generatorNow;
@@ -255,6 +421,13 @@ Future<void> main(List<String> args) async {
       if (command.isStaleAt(DateTime.now())) {
         _log('machine $machineId: ON sent at ${command.issuedAt!.toLocal()} '
             'arrived too late — ignored');
+        continue;
+      }
+
+      // Like the firmware: no starts while the supply is bad or settling.
+      if (on && !supply.allowsStart) {
+        _log('machine $machineId: start refused, supply ${supply.wireName}');
+        publish(topics.state(machineId), PanelTopics.off);
         continue;
       }
 
@@ -306,6 +479,24 @@ Map<String, String> _parseArgs(List<String> args) {
 void _log(String message) {
   final time = DateTime.now().toIso8601String().substring(11, 19);
   stdout.writeln('[$time] $message');
+}
+
+/// Parse `kind:start:length` (seconds) for --supply-fault, or null.
+({SupplyState kind, Duration start, Duration length})? _parseFault(
+    String? value) {
+  final parts = (value ?? '').split(':');
+  if (parts.length != 3) return null;
+  final kind = SupplyStateX.fromWire(parts[0]);
+  final start = int.tryParse(parts[1]);
+  final length = int.tryParse(parts[2]);
+  if (kind == null || !kind.isFault || start == null || length == null) {
+    return null;
+  }
+  return (
+    kind: kind,
+    start: Duration(seconds: start),
+    length: Duration(seconds: length),
+  );
 }
 
 /// Parse `a-b` (hours 0-24) into a range, or null.

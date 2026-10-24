@@ -39,6 +39,12 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
     with readings missing are marked.
   - Without sensors, it estimates from each machine's nameplate rating
     and labels the figures as estimates.
+- **Supply protection**: with an incomer meter, the panel switches every
+  machine off on low or high voltage, a lost phase or a power cut, and
+  refuses starts until the supply is steady again (it never restarts
+  machines itself). The app shows why on the Dashboard and Control tabs,
+  alerts you, and keeps a log of faults and power cuts with their times
+  and voltages, which you can copy as CSV for a complaint to UEDCL.
 - **UEDCL Tariff**: billing category and the rate from your current bill.
   You get a warning when the rate is over 90 days old (ERA adjusts tariffs
   quarterly), and an alert when the daily cost passes a limit you set.

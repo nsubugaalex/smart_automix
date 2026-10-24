@@ -70,7 +70,9 @@ class MqttPanelLink extends PanelLink {
         ..subscribe(topics.allMachinePower)
         ..subscribe(topics.meter)
         ..subscribe(topics.allEnergyDays)
-        ..subscribe(topics.source);
+        ..subscribe(topics.source)
+        ..subscribe(topics.supply)
+        ..subscribe(topics.supplyEvents);
       _update(PanelLinkStatus.connected);
     } catch (e) {
       if (_disposed) return;
@@ -90,8 +92,24 @@ class MqttPanelLink extends PanelLink {
     if (message.topic == topics.meter) {
       final meter = PanelTopics.parseMeter(message.payload);
       if (meter != null) {
-        _telemetry.add(MeterReport(watts: meter.watts, kwh: meter.kwh));
+        _telemetry.add(MeterReport(
+            watts: meter.watts,
+            kwh: meter.kwh,
+            volts: PanelTopics.parseMeterVolts(message.payload)));
       }
+      return;
+    }
+    if (message.topic == topics.supply) {
+      final supply = PanelTopics.parseSupply(message.payload);
+      if (supply != null) {
+        _telemetry
+            .add(SupplyStatusReport(state: supply.state, since: supply.since));
+      }
+      return;
+    }
+    if (message.topic == topics.supplyEvents) {
+      final events = PanelTopics.parseSupplyEvents(message.payload);
+      if (events != null) _telemetry.add(SupplyEventsReport(events));
       return;
     }
     if (message.topic == topics.source) {

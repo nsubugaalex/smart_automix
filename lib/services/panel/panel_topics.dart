@@ -3,6 +3,8 @@
 
 import 'dart:convert';
 
+import '../../models/supply.dart';
+
 /// MQTT topic contract between the app and a switch panel controller.
 ///
 /// | Topic                                   | Direction   | Payload       | Retained |
@@ -14,6 +16,8 @@ import 'dart:convert';
 /// | `smartautomix/<panel>/meter`               | panel → app | `{"w": 15200, "kwh": 48211.7}` | no |
 /// | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": <s>, "last": <s>, "h": [24 × kWh], "g": 4.2, "gs": 3600}` | yes |
 /// | `smartautomix/<panel>/source`              | panel → app | `grid` / `generator` | yes |
+/// | `smartautomix/<panel>/supply`              | panel → app | `{"state": "undervoltage", "since": <s>}` | yes |
+/// | `smartautomix/<panel>/supply/events`       | panel → app | `[{"kind", "phase", "from", "to", "min", "max"}]` | yes |
 class PanelTopics {
   PanelTopics(this.panelId) {
     if (!isValidPanelId(panelId)) {
@@ -47,6 +51,12 @@ class PanelTopics {
 
   /// Grid or generator supply, from the changeover switch (retained).
   String get source => '$_base/source';
+
+  /// Supply protection state (retained).
+  String get supply => '$_base/supply';
+
+  /// The panel's recent supply faults and power cuts (retained).
+  String get supplyEvents => '$_base/supply/events';
 
   String get _energy => '$_base/energy/';
 
@@ -149,6 +159,70 @@ class PanelTopics {
     return (watts: watts, kwh: kwh);
   }
 
+  /// Parse a `supply` payload: `{"state": <name>, "since": <s>}`.
+  static ({SupplyState state, DateTime? since})? parseSupply(String payload) {
+    final json = _decodeObject(payload);
+    final name = json?['state'];
+    final state = name is String ? SupplyStateX.fromWire(name) : null;
+    if (state == null) return null;
+    final since = json!['since'];
+    return (
+      state: state,
+      since: since is int && since > 0
+          ? DateTime.fromMillisecondsSinceEpoch(since * 1000)
+          : null,
+    );
+  }
+
+  /// Parse a `supply/events` payload: a JSON list with times in seconds
+  /// since 1970 (0 = unknown, or still going on for `to`). Invalid entries
+  /// are skipped; null if it isn't a list.
+  static List<SupplyEvent>? parseSupplyEvents(String payload) {
+    Object? decoded;
+    try {
+      decoded = jsonDecode(payload);
+    } on FormatException {
+      return null;
+    }
+    if (decoded is! List) return null;
+    int? ms(Object? s) => s is int && s > 0 ? s * 1000 : null;
+    return [
+      for (final e in decoded)
+        if (e is Map)
+          SupplyEvent.fromJson({
+            ...e,
+            'from': ms(e['from']),
+            'to': ms(e['to']),
+          })
+    ].nonNulls.toList();
+  }
+
+  static String encodeSupply(SupplyState state, {DateTime? since}) =>
+      jsonEncode({
+        'state': state.wireName,
+        'since': since == null ? 0 : since.millisecondsSinceEpoch ~/ 1000,
+      });
+
+  static String encodeSupplyEvents(List<SupplyEvent> events) => jsonEncode([
+        for (final e in events)
+          {
+            'kind': e.kind.wireName,
+            'phase': e.phase,
+            'from': (e.from?.millisecondsSinceEpoch ?? 0) ~/ 1000,
+            'to': (e.to?.millisecondsSinceEpoch ?? 0) ~/ 1000,
+            'min': _round(e.minVolts, 1),
+            'max': _round(e.maxVolts, 1),
+          }
+      ]);
+
+  /// The phase voltages in a meter payload's optional `v` list; null where
+  /// a phase didn't answer, or null if there is no list.
+  static List<double?>? parseMeterVolts(String payload) {
+    final v = _decodeObject(payload)?['v'];
+    if (v is! List) return null;
+    return [for (final x in v) _nonNegative(x)];
+  }
+
   /// Parse a `source` payload: true for `generator`, false for `grid`,
   /// null if invalid.
   static bool? parseSource(String payload) {
@@ -225,8 +299,13 @@ class PanelTopics {
   static String encodePower({required double watts, required double amps}) =>
       jsonEncode({'w': _round(watts, 1), 'a': _round(amps, 2)});
 
-  static String encodeMeter({required double watts, required double kwh}) =>
-      jsonEncode({'w': _round(watts, 1), 'kwh': _round(kwh, 3)});
+  static String encodeMeter(
+          {required double watts, required double kwh, List<double>? volts}) =>
+      jsonEncode({
+        'w': _round(watts, 1),
+        'kwh': _round(kwh, 3),
+        if (volts != null) 'v': [for (final v in volts) _round(v, 1)],
+      });
 
   static Map<String, dynamic>? _decodeObject(String payload) {
     try {

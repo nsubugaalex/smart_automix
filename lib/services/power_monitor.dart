@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/energy_prices.dart';
+import '../models/supply.dart';
 import 'energy_log.dart';
 import 'panel/panel_link.dart';
 
@@ -28,6 +30,7 @@ class MeterReading {
     required this.watts,
     required this.kwh,
     required this.at,
+    this.volts,
   });
 
   final double watts;
@@ -35,6 +38,20 @@ class MeterReading {
   /// The meter's cumulative energy register.
   final double kwh;
   final DateTime at;
+
+  /// Each incomer phase's voltage; null for a phase that didn't answer.
+  final List<double?>? volts;
+}
+
+/// A supply event that is new to the app, or that has just ended.
+@immutable
+class SupplyEventChange {
+  const SupplyEventChange(this.event, {required this.isNew});
+
+  final SupplyEvent event;
+
+  /// False when an event the app already had has ended.
+  final bool isNew;
 }
 
 /// Keeps the latest power and meter readings from the panel's sensors.
@@ -59,6 +76,10 @@ class PowerMonitor extends ChangeNotifier {
   static const defaultMaxAge = Duration(seconds: 30);
 
   static const _historyKey = 'energy_history';
+  static const _supplyEventsKey = 'supply_events';
+
+  /// Supply events kept in the app (the panel only keeps its last 16).
+  static const maxSupplyEvents = 200;
 
   /// Readings arrive every few seconds; save the history at most this
   /// often (and straight away when a new day starts).
@@ -81,6 +102,29 @@ class PowerMonitor extends ChangeNotifier {
   EnergyLog _history = EnergyLog();
   DateTime? _lastSave;
   Timer? _saveTimer;
+
+  SupplyState? _supplyState;
+  DateTime? _supplySince;
+  final Map<String, SupplyEvent> _supplyEvents = {};
+  final _supplyChanges = StreamController<SupplyEventChange>.broadcast();
+
+  /// The panel's supply protection state; null if the panel doesn't report
+  /// it (no incomer meter, or older firmware).
+  SupplyState? get supplyState => _supplyState;
+
+  /// When the panel entered [supplyState], if its clock was set.
+  DateTime? get supplySince => _supplySince;
+
+  /// Supply faults and power cuts, newest first.
+  List<SupplyEvent> get supplyEvents {
+    final list = _supplyEvents.values.toList()
+      ..sort(
+          (a, b) => (b.from ?? DateTime(0)).compareTo(a.from ?? DateTime(0)));
+    return list;
+  }
+
+  /// Events new to the app, and known events that have ended, for alerts.
+  Stream<SupplyEventChange> get supplyEventChanges => _supplyChanges.stream;
 
   /// Metered energy and cost per day.
   EnergyLog get history => _history;
@@ -129,6 +173,16 @@ class PowerMonitor extends ChangeNotifier {
       _history.seedDay(legacyAt, registerKwh: legacyStart);
       await _save();
     }
+    try {
+      final events = jsonDecode(prefs.getString(_supplyEventsKey) ?? '[]');
+      if (events is List) {
+        for (final e in events.map(SupplyEvent.fromJson).nonNulls) {
+          _supplyEvents[e.key] = e;
+        }
+      }
+    } on FormatException {
+      // Start a fresh supply log.
+    }
     if (prefs.containsKey(_legacyDayKey)) {
       await prefs.remove(_legacyDayKey);
       await prefs.remove(_legacyDayStartKwhKey);
@@ -160,6 +214,16 @@ class PowerMonitor extends ChangeNotifier {
           notifyListeners();
         }
         return;
+      case SupplyStatusReport():
+        if (_supplyState != report.state || _supplySince != report.since) {
+          _supplyState = report.state;
+          _supplySince = report.since;
+          notifyListeners();
+        }
+        return;
+      case SupplyEventsReport():
+        _mergeSupplyEvents(report.events);
+        return;
       case SupplySourceReport():
         if (_onGenerator != report.onGenerator) {
           _onGenerator = report.onGenerator;
@@ -170,7 +234,8 @@ class PowerMonitor extends ChangeNotifier {
         _machines[report.machineId] =
             PowerReading(watts: report.watts, amps: report.amps, at: now);
       case MeterReport():
-        _meter = MeterReading(watts: report.watts, kwh: report.kwh, at: now);
+        _meter = MeterReading(
+            watts: report.watts, kwh: report.kwh, at: now, volts: report.volts);
         final newDay = _history.record(
             registerKwh: report.kwh,
             at: now,
@@ -184,6 +249,41 @@ class PowerMonitor extends ChangeNotifier {
     }
     _expiryTimer ??= Timer.periodic(maxAge ~/ 3, (_) => removeStale());
     notifyListeners();
+  }
+
+  /// Add the panel's events the app doesn't have, and note ones that
+  /// have ended. The panel resends its whole log on every connect, so
+  /// known, unchanged events are ignored.
+  void _mergeSupplyEvents(List<SupplyEvent> events) {
+    final changes = <SupplyEventChange>[];
+    for (final event in events) {
+      final known = _supplyEvents[event.key];
+      if (known == null) {
+        changes.add(SupplyEventChange(event, isNew: true));
+      } else if (known.isOngoing && !event.isOngoing) {
+        changes.add(SupplyEventChange(event, isNew: false));
+      } else {
+        continue;
+      }
+      _supplyEvents[event.key] = event;
+    }
+    if (changes.isEmpty) return;
+    while (_supplyEvents.length > maxSupplyEvents) {
+      _supplyEvents.remove(supplyEvents.last.key);
+    }
+    unawaited(_saveSupplyEvents());
+    changes.forEach(_supplyChanges.add);
+    notifyListeners();
+  }
+
+  Future<void> _saveSupplyEvents() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_supplyEventsKey,
+          jsonEncode([for (final e in _supplyEvents.values) e.toJson()]));
+    } catch (e) {
+      debugPrint('Could not save supply events: $e');
+    }
   }
 
   /// Save once a burst of updates is over: on connecting, the broker
@@ -226,6 +326,7 @@ class PowerMonitor extends ChangeNotifier {
     _saveTimer?.cancel();
     _sub.cancel();
     _expiryTimer?.cancel();
+    _supplyChanges.close();
     super.dispose();
   }
 }

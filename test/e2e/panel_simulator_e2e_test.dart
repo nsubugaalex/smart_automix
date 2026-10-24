@@ -13,6 +13,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_automix/models/device_model.dart';
+import 'package:smart_automix/models/supply.dart';
 import 'package:smart_automix/services/device_service.dart';
 import 'package:smart_automix/services/panel/mqtt_transport.dart';
 import 'package:smart_automix/services/panel/panel_link.dart';
@@ -80,6 +81,10 @@ void _endToEnd() {
       '--delay-ms', '100',
       '--history-days', '3',
       '--generator-hours', '0-24', // on the generator all day
+      // Low voltage 30 s in (after the other tests), for the supply test.
+      '--supply-fault', 'undervoltage:30:6',
+      '--trip-delay-s', '2',
+      '--stable-s', '3',
     ]);
     final online = Completer<void>();
     simulator!.stdout
@@ -210,6 +215,44 @@ void _endToEnd() {
     sender.publish(topics.command('3'),
         PanelTopics.encodeCommand(on: false, issuedAt: late));
     await eventually(() => !isOn('3'), 'machine 3 to switch OFF');
+  });
+
+  test('a supply fault switches machines off until the supply is steady',
+      () async {
+    expect(devices.supplyState, SupplyState.ok);
+    await devices.turnOnDevice('3');
+    await eventually(() => isOn('3'), 'machine 3 to start');
+
+    await eventually(() => devices.supplyState == SupplyState.undervoltage,
+        'the panel to trip on low voltage',
+        timeout: const Duration(seconds: 45));
+    await eventually(() => !isOn('3'), 'machine 3 to be switched off');
+    expect(devices.supplyAllowsStart, isFalse);
+
+    // The panel refuses starts too, not just the app.
+    final sender = MqttClientTransport(
+      PanelSettings(
+          mode: PanelMode.mqtt, host: _host!, tcpPort: _port, panelId: panelId),
+      clientId: 'smartautomix-e2e-${PanelSettings.randomHex(6)}',
+    );
+    await sender.connect();
+    addTearDown(sender.disconnect);
+    sender.publish(topics.command('3'),
+        PanelTopics.encodeCommand(on: true, issuedAt: DateTime.now()));
+    await eventually(() => simulatorLog.any((l) => l.contains('start refused')),
+        'the panel to refuse the start');
+    expect(isOn('3'), isFalse);
+
+    final event = devices.supplyEvents
+        .firstWhere((e) => e.kind == SupplyState.undervoltage);
+    expect(event.phase, 2);
+    expect(event.minVolts, lessThan(200));
+
+    await eventually(() => devices.supplyState == SupplyState.ok,
+        'starts to be allowed again',
+        timeout: const Duration(seconds: 20));
+    expect(devices.supplyEvents.first.isOngoing, isFalse);
+    expect(isOn('3'), isFalse, reason: 'never restarted automatically');
   });
 
   test('stopping the panel shows it offline', () async {

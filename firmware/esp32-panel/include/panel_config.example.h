@@ -64,6 +64,23 @@
 // normal operation.
 #define PZEM_SET_ADDRESS 0
 
+// ---- Supply protection -------------------------------------------------------
+
+// Uses the incomer meter PZEMs (METER_PZEMS). If the supply stays outside
+// these limits for SUPPLY_TRIP_DELAY_MS, every machine is switched off;
+// starts are allowed again once it has been back in range for
+// SUPPLY_STABLE_MS. Machines are never restarted automatically.
+#define SUPPLY_PROTECTION 1
+// Nominal 230 V. Motors overheat on low voltage.
+#define UNDERVOLTAGE_V 200
+#define OVERVOLTAGE_V 255
+// Below this a phase counts as lost (a dead phase usually shows as its
+// PZEM not answering at all).
+#define PHASE_LOSS_V 100
+// Long enough to ride through the voltage dip of a motor starting.
+#define SUPPLY_TRIP_DELAY_MS 5000
+#define SUPPLY_STABLE_MS 60000
+
 // ---- Generator ---------------------------------------------------------------
 
 // Optional: a GPIO reading an auxiliary contact on the changeover switch

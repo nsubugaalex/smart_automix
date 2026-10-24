@@ -7,6 +7,7 @@ import '../../services/tariff_service.dart';
 import '../../services/energy_insights.dart';
 import '../../widgets/common/consumption_gauge.dart';
 import '../../widgets/common/cost_insights.dart';
+import '../../widgets/common/supply_status.dart';
 import '../../widgets/common/energy_history_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
@@ -32,7 +33,17 @@ class EnergyMonitorBody extends StatelessWidget {
     final tou = tariffService.timeOfUse;
     final generator = GeneratorSummary.of(recent);
     final onGenerator = deviceService.onGenerator;
+    final supply = deviceService.supplyState;
     return [
+      if (supply != null) ...[
+        const SizedBox(height: 12),
+        SupplyCard(
+          state: supply,
+          volts: deviceService.supplyVolts,
+          events: deviceService.supplyEvents,
+          now: now,
+        ),
+      ],
       if (tou.enabled) ...[
         const SizedBox(height: 12),
         TimeOfUseCard(

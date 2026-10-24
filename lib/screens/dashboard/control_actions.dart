@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import '../../models/device_model.dart';
 import '../../models/energy_prices.dart';
+import '../../models/supply.dart';
 import '../../services/device_service.dart';
 import '../../services/security_service.dart';
 import '../../services/tariff_service.dart';
@@ -12,12 +13,40 @@ import '../../widgets/custom/uganda_theme.dart';
 /// safety rules live in one place:
 ///  - switching a machine ON needs the operator PIN (when enabled);
 ///  - switching OFF never does — cutting power must always be possible;
+///  - while the panel reports a bad supply, starts are refused with an
+///    explanation (the panel refuses them too);
 ///  - bulk actions (Cut All / Start All) ask for confirmation first;
 ///  - with time-of-use billing, starting a large machine at peak time
 ///    shows what it costs per hour now and off-peak (once per machine per
 ///    day, so it informs rather than nags).
 
+/// Explain why the panel refuses starts while the supply is bad.
+Future<bool> _supplyAllowsStart(BuildContext context) async {
+  if (deviceService.supplyAllowsStart) return true;
+  final state = deviceService.supplyState!;
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Can\'t start: ${state.label.toLowerCase()}'),
+      content: Text(state.isFault
+          ? 'The panel switched machines off to protect them from the bad '
+              'supply, and refuses starts until it is back and steady.'
+          : 'The supply is back, but the panel waits for it to stay steady '
+              'before allowing starts. Try again in a minute.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
+  return false;
+}
+
 Future<bool> _authorizeStart(BuildContext context) async {
+  if (!await _supplyAllowsStart(context)) return false;
+  if (!context.mounted) return false;
   if (securityService.isUnlocked) return true;
   return showVerifyPinDialog(context, title: 'PIN required to start machines');
 }

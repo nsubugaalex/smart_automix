@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_automix/models/supply.dart';
 import 'package:smart_automix/services/panel/mqtt_panel_link.dart';
 import 'package:smart_automix/services/panel/panel_link.dart';
 import 'package:smart_automix/services/panel/panel_topics.dart';
@@ -229,6 +230,8 @@ void main() {
             'day:${t.date}:${t.kwh}kWh/gen ${t.generatorKwh}kWh/'
                 'h${t.gridHourlyKwh?.length}',
           SupplySourceReport() => 'source:${t.onGenerator ? 'gen' : 'grid'}',
+          SupplyStatusReport() => 'supply:${t.state.wireName}',
+          SupplyEventsReport() => 'events:${t.events.length}',
         }));
 
     transport
@@ -245,6 +248,9 @@ void main() {
               gridHourlyKwh: List.filled(24, 3),
               generatorKwh: 7.9,
               generatorSeconds: 5400))
+      ..deliver(topics.supply, '{"state": "phase_loss", "since": 1792616405}')
+      ..deliver(topics.supplyEvents,
+          '[{"kind": "undervoltage", "phase": 2, "from": 1792616405, "to": 0, "min": 183.2, "max": 231}, {"kind": "bogus"}]')
       ..deliver(topics.source, 'generator')
       ..deliver(topics.source, 'solar')
       ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
@@ -255,6 +261,8 @@ void main() {
       '4:6800.0W/11.2A',
       'meter:9000.0W/48211.5kWh',
       'day:2026-10-21:79.9kWh/gen 7.9kWh/h24',
+      'supply:phase_loss',
+      'events:1',
       'source:gen',
     ]);
   });

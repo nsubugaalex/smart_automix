@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../models/machine_load.dart';
+import '../models/supply.dart';
 import '../utils/debouncer.dart';
 import 'energy_log.dart';
 import 'panel/panel_link.dart';
@@ -165,6 +166,24 @@ class DeviceService extends ChangeNotifier {
   /// Whether the panel is on generator power; null if it doesn't report
   /// its supply source.
   bool? get onGenerator => _power.onGenerator;
+
+  /// The panel's supply protection state; null if it doesn't report one.
+  SupplyState? get supplyState => _power.supplyState;
+  DateTime? get supplySince => _power.supplySince;
+
+  /// Incomer phase voltages from a recent meter reading, or null.
+  List<double?>? get supplyVolts => _power.meter?.volts;
+
+  /// Supply faults and power cuts, newest first.
+  List<SupplyEvent> get supplyEvents => _power.supplyEvents;
+  Stream<SupplyEventChange> get supplyEventChanges => _power.supplyEventChanges;
+
+  /// Whether machines may be started: false while the panel reports a
+  /// supply fault or is waiting for the supply to settle.
+  bool get supplyAllowsStart => _supplyAllows(_power.supplyState);
+
+  static bool _supplyAllows(SupplyState? state) =>
+      state == null || state.allowsStart;
 
   /// Cost of [meteredEnergyTodayKwh] at the current tariff, in UGX.
   double? get meteredCostTodayUgx {

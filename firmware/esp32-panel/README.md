@@ -150,6 +150,16 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Supply protection:** with incomer meter PZEMs, the controller watches
+  each phase's voltage. If the supply stays below `UNDERVOLTAGE_V` (200 V)
+  or above `OVERVOLTAGE_V` (255 V), loses a phase, or goes dead, for
+  `SUPPLY_TRIP_DELAY_MS` (5 s), every machine is switched off. Starts are
+  refused until the supply has been back in range for `SUPPLY_STABLE_MS`
+  (1 min), also after power-up. Machines are never restarted automatically.
+  The last 16 faults and power cuts are kept in flash and sent to the app.
+  If every meter PZEM stops answering while the controller still has
+  power, that counts as a power cut, so a broken meter bus also stops the
+  machines (the safe way to fail).
 - **Hourly and generator energy:** each day's total is split by local
   hour for grid energy (for time-of-use pricing), with generator energy
   and run time counted apart.

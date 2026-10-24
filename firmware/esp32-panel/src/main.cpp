@@ -14,6 +14,8 @@
 // - Machines are switched on at least MIN_START_GAP_MS apart.
 // - A watchdog restarts the controller if it hangs; like any restart,
 //   that leaves every machine OFF.
+// - Low or high voltage, a lost phase or a dead supply switches every
+//   machine off, and starts are refused until the supply is steady again.
 // - If a contactor with a feedback contact drops out by itself (overload
 //   relay, E-stop, coil supply lost), its relay is switched off too, so
 //   the machine stays off until someone switches it on again.
@@ -30,6 +32,7 @@
 #include <WiFiClientSecure.h>
 #include <esp_task_wdt.h>
 #include <sys/time.h>
+#include <esp_system.h>
 #include <time.h>
 
 #if __has_include("panel_config.h")
@@ -55,6 +58,14 @@
 #ifndef ENERGY_KEEP_DAYS
 #define ENERGY_KEEP_DAYS 400
 #endif
+#ifndef SUPPLY_PROTECTION
+#define SUPPLY_PROTECTION 1
+#define UNDERVOLTAGE_V 200
+#define OVERVOLTAGE_V 255
+#define PHASE_LOSS_V 100
+#define SUPPLY_TRIP_DELAY_MS 5000
+#define SUPPLY_STABLE_MS 60000
+#endif
 #ifndef GENERATOR_PIN
 #define GENERATOR_PIN NO_PIN
 #define GENERATOR_ACTIVE_LOW true
@@ -74,6 +85,8 @@ const String kMeterTopic = kBase + "/meter";
 const String kMachinesPrefix = kBase + "/machines/";
 const String kEnergyPrefix = kBase + "/energy/";
 const String kSourceTopic = kBase + "/source";
+const String kSupplyTopic = kBase + "/supply";
+const String kSupplyEventsTopic = kBase + "/supply/events";
 
 constexpr size_t kMachineCount = sizeof(MACHINES) / sizeof(MACHINES[0]);
 constexpr uint32_t kReconnectIntervalMs = 5000;
@@ -118,8 +131,8 @@ WiFiClientSecure net;
 #else
 WiFiClient net;
 #endif
-// Room for a day's energy message with its 24 hourly values.
-MQTTClient mqtt(1024);
+// Room for a day's energy message (24 hourly values) and the supply log.
+MQTTClient mqtt(2048);
 
 uint32_t lastConnectAttempt = 0;
 uint32_t lastSensorPublish = 0;
@@ -207,6 +220,264 @@ void watchSource(uint32_t now) {
   onGenerator = raw;
   log(raw ? "supply: generator" : "supply: grid");
   publishSource();
+}
+
+// ---- Supply protection -------------------------------------------------------
+//
+// Low voltage, high voltage and a lost phase burn motors. The incomer meter
+// PZEMs give each phase's voltage; if the supply stays out of range for
+// SUPPLY_TRIP_DELAY_MS (long enough to ride through a motor's start-up
+// dip), every machine is switched off and starts are refused until the
+// supply has been steady for SUPPLY_STABLE_MS. Machines are never
+// restarted automatically. Faults and outages are kept in a short log
+// (flash), published retained on supply/events.
+
+enum class SupplyState : uint8_t {
+  Ok,
+  Settling,  // back in range, waiting to be steady before allowing starts
+  Undervoltage,
+  Overvoltage,
+  PhaseLoss,
+  NoSupply,  // every phase dead while this controller is still powered
+};
+
+const char *supplyStateName(SupplyState s) {
+  switch (s) {
+    case SupplyState::Ok: return "ok";
+    case SupplyState::Settling: return "settling";
+    case SupplyState::Undervoltage: return "undervoltage";
+    case SupplyState::Overvoltage: return "overvoltage";
+    case SupplyState::PhaseLoss: return "phase_loss";
+    case SupplyState::NoSupply: return "outage";
+  }
+  return "ok";
+}
+
+bool isFault(SupplyState s) {
+  return s != SupplyState::Ok && s != SupplyState::Settling;
+}
+
+struct SupplyEvent {
+  uint8_t kind = 0;   // a SupplyState fault
+  uint8_t phase = 0;  // 0-based meter PZEM index
+  float minV = 0;
+  float maxV = 0;
+  int64_t from = 0;  // seconds since 1970; 0 if the clock wasn't set
+  int64_t to = 0;    // 0 while it lasts
+};
+
+constexpr size_t kSupplyEventCount = 16;
+struct SupplyLog {
+  SupplyEvent events[kSupplyEventCount];
+  uint8_t count = 0;  // oldest first
+};
+
+constexpr size_t kMaxPhases = 3;
+// The controller saves the time this often, so after a power cut it knows
+// roughly when the power went.
+constexpr uint32_t kHeartbeatMs = 5 * 60 * 1000;
+
+Preferences supplyStore;
+SupplyLog supplyLog;
+// Starting up (often just after a power cut), the supply has to prove
+// steady before machines may start.
+SupplyState supplyState = SupplyState::Settling;
+SupplyState pendingFault = SupplyState::Ok;
+uint32_t faultSince = 0;
+uint32_t okSince = 0;
+int64_t supplySinceS = 0;
+bool openEvent = false;  // the newest event is still going on
+float supplyVolts[kMaxPhases] = {NAN, NAN, NAN};
+size_t supplyPhases = 0;
+bool bootOutagePending = false;
+int64_t lastHeartbeatS = 0;
+uint32_t lastHeartbeatSave = 0;
+
+bool supplyProtected() { return SUPPLY_PROTECTION && !meterPzems.empty(); }
+
+bool supplyAllowsStart() {
+  return !supplyProtected() || supplyState == SupplyState::Ok;
+}
+
+int64_t nowSeconds() {
+  const time_t now = time(nullptr);
+  return now >= kMinValidEpochS ? static_cast<int64_t>(now) : 0;
+}
+
+void saveSupplyLog() {
+  supplyStore.putBytes("log", &supplyLog, sizeof(supplyLog));
+}
+
+void addSupplyEvent(const SupplyEvent &event) {
+  if (supplyLog.count == kSupplyEventCount) {
+    memmove(&supplyLog.events[0], &supplyLog.events[1],
+            sizeof(SupplyEvent) * (kSupplyEventCount - 1));
+    supplyLog.count--;
+  }
+  supplyLog.events[supplyLog.count++] = event;
+}
+
+void publishSupply() {
+  if (!supplyProtected() || !mqtt.connected()) return;
+  char payload[96];
+  snprintf(payload, sizeof(payload), "{\"state\":\"%s\",\"since\":%lld}",
+           supplyStateName(supplyState),
+           static_cast<long long>(supplySinceS));
+  mqtt.publish(kSupplyTopic, payload, /*retained=*/true, /*qos=*/1);
+}
+
+void publishSupplyEvents() {
+  if (!supplyProtected() || !mqtt.connected()) return;
+  String json = "[";
+  for (size_t i = 0; i < supplyLog.count; i++) {
+    const SupplyEvent &e = supplyLog.events[i];
+    char item[160];
+    snprintf(item, sizeof(item),
+             "%s{\"kind\":\"%s\",\"phase\":%u,\"from\":%lld,\"to\":%lld,"
+             "\"min\":%.1f,\"max\":%.1f}",
+             i ? "," : "", supplyStateName(static_cast<SupplyState>(e.kind)),
+             e.phase + 1, static_cast<long long>(e.from),
+             static_cast<long long>(e.to), e.minV, e.maxV);
+    json += item;
+  }
+  json += "]";
+  mqtt.publish(kSupplyEventsTopic, json, /*retained=*/true, /*qos=*/1);
+}
+
+void setSupplyState(SupplyState state) {
+  supplyState = state;
+  supplySinceS = nowSeconds();
+  publishSupply();
+}
+
+// The worst problem across the phases, and which phase it's on.
+SupplyState classifySupply(const float *volts, size_t phases, uint8_t &phase) {
+  size_t live = 0;
+  for (size_t i = 0; i < phases; i++) {
+    if (!isnan(volts[i]) && volts[i] >= PHASE_LOSS_V) live++;
+  }
+  if (live == 0) return SupplyState::NoSupply;
+  // A PZEM is powered from its phase, so a dead phase usually reads as no
+  // answer at all.
+  for (size_t i = 0; i < phases; i++) {
+    if (isnan(volts[i]) || volts[i] < PHASE_LOSS_V) {
+      phase = i;
+      return SupplyState::PhaseLoss;
+    }
+  }
+  for (size_t i = 0; i < phases; i++) {
+    if (volts[i] < UNDERVOLTAGE_V) {
+      phase = i;
+      return SupplyState::Undervoltage;
+    }
+  }
+  for (size_t i = 0; i < phases; i++) {
+    if (volts[i] > OVERVOLTAGE_V) {
+      phase = i;
+      return SupplyState::Overvoltage;
+    }
+  }
+  return SupplyState::Ok;
+}
+
+void tripSupply(SupplyState fault, uint8_t phase) {
+  supplyState = fault;
+  SupplyEvent event;
+  event.kind = static_cast<uint8_t>(fault);
+  event.phase = phase;
+  event.minV = event.maxV = isnan(supplyVolts[phase]) ? 0 : supplyVolts[phase];
+  event.from = nowSeconds();
+  addSupplyEvent(event);
+  openEvent = true;
+  // Switch everything off through the normal path, so the app gets the
+  // usual state reports. This also cancels starts still waiting.
+  for (auto &m : machines) m.request = Request::Off;
+  log(String("SUPPLY FAULT: ") + supplyStateName(fault) + " on phase " +
+      (phase + 1) + ", all machines switched off");
+  saveSupplyLog();
+  setSupplyState(fault);
+  publishSupplyEvents();
+}
+
+void evaluateSupply(uint32_t nowMs) {
+  if (!supplyProtected()) return;
+  uint8_t phase = 0;
+  const SupplyState seen = classifySupply(supplyVolts, supplyPhases, phase);
+
+  if (openEvent && isFault(supplyState)) {
+    SupplyEvent &e = supplyLog.events[supplyLog.count - 1];
+    for (size_t i = 0; i < supplyPhases; i++) {
+      const float v = isnan(supplyVolts[i]) ? 0 : supplyVolts[i];
+      if (i == e.phase) {
+        e.minV = min(e.minV, v);
+        e.maxV = max(e.maxV, v);
+      }
+    }
+  }
+
+  if (seen != SupplyState::Ok) {
+    okSince = 0;
+    if (isFault(supplyState)) return;  // already tripped
+    if (pendingFault != seen) {
+      pendingFault = seen;
+      faultSince = nowMs;
+      return;
+    }
+    if (nowMs - faultSince >= SUPPLY_TRIP_DELAY_MS) tripSupply(seen, phase);
+    return;
+  }
+
+  pendingFault = SupplyState::Ok;
+  if (isFault(supplyState)) {
+    if (openEvent) {
+      supplyLog.events[supplyLog.count - 1].to = nowSeconds();
+      openEvent = false;
+      saveSupplyLog();
+      publishSupplyEvents();
+    }
+    okSince = nowMs;
+    log("supply back in range; starts allowed once it has been steady");
+    setSupplyState(SupplyState::Settling);
+  } else if (supplyState == SupplyState::Settling &&
+             nowMs - okSince >= SUPPLY_STABLE_MS) {
+    log("supply steady: starts allowed");
+    setSupplyState(SupplyState::Ok);
+  }
+}
+
+void loadSupply() {
+  supplyStore.begin("supply", /*readOnly=*/false);
+  if (supplyStore.getBytesLength("log") == sizeof(supplyLog)) {
+    supplyStore.getBytes("log", &supplyLog, sizeof(supplyLog));
+  }
+  lastHeartbeatS = supplyStore.getLong64("beat", 0);
+  // Booting from power-on or a brownout (not a watchdog reset or a reflash)
+  // means the power went off; log it once the clock is set.
+  const esp_reset_reason_t reason = esp_reset_reason();
+  bootOutagePending =
+      reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT;
+}
+
+// Log a power cut that switched this controller off, and keep the
+// heartbeat that dates the next one.
+void watchPowerCuts(uint32_t nowMs) {
+  const int64_t now = nowSeconds();
+  if (now == 0) return;
+  if (bootOutagePending) {
+    bootOutagePending = false;
+    SupplyEvent event;
+    event.kind = static_cast<uint8_t>(SupplyState::NoSupply);
+    event.from = lastHeartbeatS;  // within kHeartbeatMs of the real time
+    event.to = now - static_cast<int64_t>(nowMs / 1000);
+    addSupplyEvent(event);
+    saveSupplyLog();
+    publishSupplyEvents();
+    log("power cut logged (controller restarted on power-up)");
+  }
+  if (lastHeartbeatSave == 0 || nowMs - lastHeartbeatSave >= kHeartbeatMs) {
+    lastHeartbeatSave = nowMs;
+    supplyStore.putLong64("beat", now);
+  }
 }
 
 // ---- Daily energy ------------------------------------------------------------
@@ -358,6 +629,7 @@ struct SensorSweep {
   float meterWatts = 0;
   double meterKwh = 0;  // float rounds a 5-digit register to 0.01
   bool meterValid = true;
+  float volts[kMaxPhases] = {NAN, NAN, NAN};
 };
 
 SensorSweep sweep;
@@ -380,11 +652,14 @@ void stepSensors(uint32_t now) {
   const size_t meterIndex = sweep.step - kMachineCount;
   if (meterIndex < meterPzems.size()) {
     sweep.step++;
-    // Read even while offline: the daily energy keeps counting.
-    if (!sweep.meterValid) return;
+    // Read even while offline: the daily energy keeps counting. Read every
+    // phase even after one failed: its voltage is what supply protection
+    // needs.
     auto *pzem = meterPzems[meterIndex];
+    const float v = pzem->voltage();
     const float w = pzem->power();
     const float e = pzem->energy();
+    if (meterIndex < kMaxPhases) sweep.volts[meterIndex] = v;
     // A partial sum would understate the load, so skip the whole reading.
     if (isnan(w) || isnan(e)) {
       sweep.meterValid = false;
@@ -395,12 +670,22 @@ void stepSensors(uint32_t now) {
     return;
   }
   sweep.active = false;
-  if (meterPzems.empty() || !sweep.meterValid) return;
+  if (meterPzems.empty()) return;
+  supplyPhases = min(meterPzems.size(), kMaxPhases);
+  memcpy(supplyVolts, sweep.volts, sizeof(supplyVolts));
+  evaluateSupply(now);
+  if (!sweep.meterValid) return;
   recordEnergy(sweep.meterKwh, now);
   if (!mqtt.connected()) return;
-  char payload[64];
-  snprintf(payload, sizeof(payload), "{\"w\":%.1f,\"kwh\":%.3f}",
-           sweep.meterWatts, sweep.meterKwh);
+  char payload[128];
+  int n = snprintf(payload, sizeof(payload),
+                   "{\"w\":%.1f,\"kwh\":%.3f,\"v\":[", sweep.meterWatts,
+                   sweep.meterKwh);
+  for (size_t i = 0; i < supplyPhases; i++) {
+    n += snprintf(payload + n, sizeof(payload) - n, i ? ",%.1f" : "%.1f",
+                  sweep.volts[i]);
+  }
+  snprintf(payload + n, sizeof(payload) - n, "]}");
   mqtt.publish(kMeterTopic, payload, /*retained=*/false, /*qos=*/0);
 }
 
@@ -499,6 +784,8 @@ void connectMqtt() {
   // Tell the app the real state of every machine straight away.
   for (auto &m : machines) publishState(m);
   publishSource();
+  publishSupply();
+  publishSupplyEvents();
   publishEnergy(millis());
   log("online as panel " PANEL_ID);
 }
@@ -532,6 +819,13 @@ void processRequests(uint32_t now) {
       if (m.relayOn) {
         m.request = Request::None;
         startConfirm(m, now);  // already on: just confirm it
+        continue;
+      }
+      if (!supplyAllowsStart()) {
+        m.request = Request::None;
+        log(String("machine ") + m.cfg->id + ": start refused, supply " +
+            supplyStateName(supplyState));
+        publishState(m);  // still off; the app sees why on supply
         continue;
       }
       if (startedAny && now - lastStartAt < MIN_START_GAP_MS) {
@@ -653,6 +947,7 @@ void setup() {
         new PZEM004Tv30(Serial2, PZEM_RX_PIN, PZEM_TX_PIN, address));
   }
   loadEnergy();
+  loadSupply();
 
 #if MQTT_USE_TLS
   if (strlen(MQTT_CA_CERT) > 0) {
@@ -691,6 +986,7 @@ void loop() {
   processConfirmations(now);
   watchFeedback(now);
   watchSource(now);
+  watchPowerCuts(now);
   stepSensors(now);
   delay(10);
 }

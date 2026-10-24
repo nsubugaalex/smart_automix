@@ -4,8 +4,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_model.dart';
+import '../models/supply.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
+import 'power_monitor.dart';
 import 'panel/panel_link.dart';
 import 'panel/panel_settings.dart';
 import 'panel_service.dart';
@@ -29,6 +31,11 @@ class AlertService extends ChangeNotifier {
   final TariffService _tariff;
   final PanelService? _panel;
   StreamSubscription<CommandFailure>? _failuresSub;
+  StreamSubscription<SupplyEventChange>? _supplySub;
+
+  /// Supply events older than this when the app first hears of them (the
+  /// panel keeps its last 16) are recorded without an alert.
+  static const supplyAlertWindow = Duration(hours: 24);
 
   // Machines currently measured over their breaker rating, so each
   // overcurrent raises one alert rather than one per reading.
@@ -90,6 +97,7 @@ class AlertService extends ChangeNotifier {
     _devices.addListener(checkLoadHealth);
     _tariff.addListener(_recheckTariffHealth);
     _panel?.addListener(_recheckPanelHealth);
+    _supplySub ??= _devices.supplyEventChanges.listen(onSupplyEvent);
     _failuresSub ??= _devices.commandFailures.listen(
       (failure) => add(
         title: 'Command not confirmed: ${failure.machineName}',
@@ -220,6 +228,7 @@ class AlertService extends ChangeNotifier {
     _tariff.removeListener(_recheckTariffHealth);
     _panel?.removeListener(_recheckPanelHealth);
     _failuresSub?.cancel();
+    _supplySub?.cancel();
     super.dispose();
   }
 
@@ -258,6 +267,41 @@ class AlertService extends ChangeNotifier {
       );
     } else {
       await resolve('tariff-cost-threshold');
+    }
+  }
+
+  /// Alert on supply faults and power cuts: critical while one is going
+  /// on, and a note when it ends (machines stay off until restarted).
+  @visibleForTesting
+  void onSupplyEvent(SupplyEventChange change) {
+    final e = change.event;
+    final duration = e.duration;
+    final lasted = duration == null ? '' : ', for ${formatDuration(duration)}';
+    if (change.isNew && e.isOngoing) {
+      unawaited(add(
+        title: 'Supply fault: ${e.kind.label}',
+        message: '${e.summary}. The panel switched all machines off and '
+            'won\'t start any until the supply has been steady for a while.',
+        severity: AlertSeverity.critical,
+      ));
+    } else if (change.isNew) {
+      final at = e.to ?? e.from;
+      if (at == null || DateTime.now().difference(at) > supplyAlertWindow) {
+        return; // old history from the panel's log
+      }
+      unawaited(add(
+        title: '${e.kind.label} while the app was closed',
+        message: '${e.summary}$lasted. Machines stayed off afterwards; '
+            'restart them when you are ready.',
+        severity: AlertSeverity.warning,
+      ));
+    } else {
+      unawaited(add(
+        title: 'Supply back to normal',
+        message: '${e.summary}$lasted. Machines stay off until you restart '
+            'them; the panel allows starts once the supply is steady.',
+        severity: AlertSeverity.info,
+      ));
     }
   }
 
