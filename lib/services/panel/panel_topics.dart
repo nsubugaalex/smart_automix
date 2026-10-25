@@ -11,6 +11,7 @@ import '../../models/supply.dart';
 /// |-----------------------------------------|-------------|---------------|----------|
 /// | `smartautomix/<panel>/machines/<id>/set`   | app → panel | `{"cmd": "ON", "ts": <ms>}` | no |
 /// | `smartautomix/<panel>/machines/<id>/state` | panel → app | `ON` / `OFF`  | yes      |
+/// | `smartautomix/<panel>/machines/<id>/hours` | panel → app | `{"s": 720000}` (running seconds) | yes |
 /// | `smartautomix/<panel>/machines/<id>/event` | panel → app | `{"on": false, "cause": "trip", "by": "", "src": ""}` | no |
 /// | `smartautomix/<panel>/status`              | panel → app | `online` / `offline` (last will) | yes |
 /// | `smartautomix/<panel>/machines/<id>/power` | panel → app | `{"w": 7100, "a": 12.4}` | no |
@@ -93,6 +94,10 @@ class PanelTopics {
   String state(String machineId) => '$_machines$machineId/state';
   String power(String machineId) => '$_machines$machineId/power';
   String event(String machineId) => '$_machines$machineId/event';
+  String hours(String machineId) => '$_machines$machineId/hours';
+
+  /// Subscription filter matching every machine's running-hours topic.
+  String get allMachineHours => '$_machines+/hours';
 
   /// Subscription filter matching every machine's event topic.
   String get allMachineEvents => '$_machines+/event';
@@ -143,6 +148,14 @@ class PanelTopics {
       src: text(json['src'])
     );
   }
+
+  /// Parse a running-hours payload `{"s": <seconds>}`; null if invalid.
+  static int? parseHours(String payload) {
+    final s = _decodeObject(payload)?['s'];
+    return s is int && s >= 0 ? s : null;
+  }
+
+  static String encodeHours(int seconds) => jsonEncode({'s': seconds});
 
   static String encodeMachineEvent({
     required bool on,

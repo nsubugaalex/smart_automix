@@ -45,6 +45,11 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
   machines itself). The app shows why on the Dashboard and Control tabs,
   alerts you, and keeps a log of faults and power cuts with their times
   and voltages, which you can copy as CSV for a complaint to UEDCL.
+- **Maintenance**: running hours per machine (counted by the panel) and
+  the standby generator, with tasks due after a number of hours or days,
+  e.g. "grease the mill bearings every 200 h". Suggested tasks for each
+  machine type give a starting point (check the manual). Due tasks raise
+  an alert and show on the Dashboard; **Done** records the hours and date.
 - **Activity log**: a timeline of who switched what and when, trips,
   contactors that didn't close, changes made at the panel, supply faults,
   generator starts and the panel going offline, on the Dashboard and in

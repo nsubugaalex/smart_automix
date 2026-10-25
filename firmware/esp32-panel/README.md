@@ -154,6 +154,9 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Running hours:** each machine's running time is counted while it is
+  really on (contactor feedback, or the relay), kept in flash per machine
+  ID, and published for the app's maintenance reminders.
 - **Activity events:** every change of a machine's state is reported
   with its cause (a command, with the operator's name from the app; a trip;
   switching at the panel; supply protection; a contactor that didn't

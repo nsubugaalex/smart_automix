@@ -225,7 +225,8 @@ class PowerMonitor extends ChangeNotifier {
         _mergeSupplyEvents(report.events);
         return;
       case MachineEventReport():
-        return; // for the activity log
+      case MachineHoursReport():
+        return; // for the activity log and maintenance
       case SupplySourceReport():
         if (_onGenerator != report.onGenerator) {
           _onGenerator = report.onGenerator;

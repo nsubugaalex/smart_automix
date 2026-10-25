@@ -170,6 +170,14 @@ class _MainShellState extends State<MainShell> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.build_outlined),
+            title: const Text('Maintenance'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/maintenance');
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.history),
             title: const Text('Activity'),
             onTap: () {

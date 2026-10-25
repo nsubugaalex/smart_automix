@@ -232,6 +232,7 @@ void main() {
           SupplySourceReport() => 'source:${t.onGenerator ? 'gen' : 'grid'}',
           SupplyStatusReport() => 'supply:${t.state.wireName}',
           SupplyEventsReport() => 'events:${t.events.length}',
+          MachineHoursReport() => 'hours:${t.machineId}:${t.seconds}',
           MachineEventReport() =>
             'event:${t.machineId}:${t.cause.wireName}:${t.by}',
         }));
@@ -256,6 +257,8 @@ void main() {
       ..deliver(topics.event('4'),
           '{"on": false, "cause": "trip", "by": "", "src": ""}')
       ..deliver(topics.event('4'), '{"on": false, "cause": "magic"}')
+      ..deliver(topics.hours('4'), '{"s": 7200}')
+      ..deliver(topics.hours('4'), '{"s": -1}')
       ..deliver(topics.source, 'generator')
       ..deliver(topics.source, 'solar')
       ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
@@ -269,6 +272,7 @@ void main() {
       'supply:phase_loss',
       'events:1',
       'event:4:trip:',
+      'hours:4:7200',
       'source:gen',
     ]);
   });

@@ -362,7 +362,22 @@ Future<void> main(List<String> args) async {
     publishSupply();
     publishSupplyEvents();
   }
+  // Running time per machine, like the firmware's (here only since the
+  // simulator started).
+  final runSeconds = <String, double>{};
+  var lastHoursAt = DateTime.now();
+
   void publishReadings() {
+    final elapsed =
+        DateTime.now().difference(lastHoursAt).inMilliseconds / 1000;
+    lastHoursAt = DateTime.now();
+    for (final id in machineIds) {
+      if (running.contains(id)) {
+        runSeconds[id] = (runSeconds[id] ?? 0) + elapsed;
+      }
+      publish(topics.hours(id),
+          PanelTopics.encodeHours((runSeconds[id] ?? 0).round()));
+    }
     var total = _Meter.baseLoadWatts * _jitter(random);
     for (final id in machineIds) {
       final rating = _demoMachines[id] ?? const _Rating(1000, 230);

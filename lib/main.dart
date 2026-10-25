@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'services/activity_log.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/maintenance_service.dart';
 import 'services/operator_profile.dart';
 import 'services/panel_service.dart';
 import 'services/security_service.dart';
@@ -17,6 +18,7 @@ import 'screens/notifications/alerts_screen.dart';
 import 'screens/settings/network_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/devices/add_device_screen.dart';
+import 'screens/maintenance/maintenance_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -71,10 +73,19 @@ Future<void> _initializeServices() async {
     debugPrint('Stack trace: $stackTrace');
   }
 
+  // Running hours and maintenance tasks (before alerts, which watch them).
+  try {
+    await maintenanceService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Maintenance initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
   // Initialize alerts and check tariff health (stale rate, cost threshold)
   try {
     await alertService.init();
     await alertService.checkTariffHealth();
+    await alertService.checkMaintenance();
   } catch (e, stackTrace) {
     debugPrint('Alert service initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');
@@ -121,6 +132,8 @@ class MyApp extends StatelessWidget {
         return _createRoute(const AlertsScreen());
       case '/activity':
         return _createRoute(const ActivityScreen());
+      case '/maintenance':
+        return _createRoute(const MaintenanceScreen());
       case '/settings':
         return _createRoute(const SettingsScreen());
       case '/network':

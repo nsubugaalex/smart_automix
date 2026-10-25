@@ -4,9 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_model.dart';
+import '../models/maintenance.dart';
 import '../models/supply.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
+import 'maintenance_service.dart';
 import 'power_monitor.dart';
 import 'panel/panel_link.dart';
 import 'panel/panel_settings.dart';
@@ -24,12 +26,15 @@ import 'tariff_service.dart';
 /// notification settings configured; the alert still lands in the in-app
 /// Alerts screen everywhere.
 class AlertService extends ChangeNotifier {
-  AlertService(this._devices, this._tariff, {PanelService? panel})
-      : _panel = panel;
+  AlertService(this._devices, this._tariff,
+      {PanelService? panel, MaintenanceService? maintenance})
+      : _panel = panel,
+        _maintenance = maintenance;
 
   final DeviceService _devices;
   final TariffService _tariff;
   final PanelService? _panel;
+  final MaintenanceService? _maintenance;
   StreamSubscription<CommandFailure>? _failuresSub;
   StreamSubscription<SupplyEventChange>? _supplySub;
 
@@ -97,6 +102,7 @@ class AlertService extends ChangeNotifier {
     _devices.addListener(checkLoadHealth);
     _tariff.addListener(_recheckTariffHealth);
     _panel?.addListener(_recheckPanelHealth);
+    _maintenance?.addListener(_recheckMaintenance);
     _supplySub ??= _devices.supplyEventChanges.listen(onSupplyEvent);
     _failuresSub ??= _devices.commandFailures.listen(
       (failure) => add(
@@ -227,6 +233,7 @@ class AlertService extends ChangeNotifier {
     _devices.removeListener(checkLoadHealth);
     _tariff.removeListener(_recheckTariffHealth);
     _panel?.removeListener(_recheckPanelHealth);
+    _maintenance?.removeListener(_recheckMaintenance);
     _failuresSub?.cancel();
     _supplySub?.cancel();
     super.dispose();
@@ -329,6 +336,44 @@ class AlertService extends ChangeNotifier {
       ..addAll(overIds);
   }
 
+  void _recheckMaintenance() {
+    unawaited(checkMaintenance());
+  }
+
+  static const _maintenancePrefix = 'maint-';
+
+  /// One alert per maintenance task that is due, cleared once it's marked
+  /// done (or deleted). The wording doesn't change as hours pass, so the
+  /// phone isn't notified again on every tick.
+  Future<void> checkMaintenance() async {
+    final maintenance = _maintenance;
+    if (maintenance == null) return;
+    final due = {
+      for (final t in maintenance.dueTasks) '$_maintenancePrefix${t.id}': t
+    };
+    for (final entry in due.entries) {
+      final t = entry.value;
+      final machine = t.machineId == MaintenanceTask.generatorId
+          ? 'Standby generator'
+          : _devices.getDeviceById(t.machineId)?.name ?? 'A machine';
+      await upsert(
+        id: entry.key,
+        title: 'Maintenance due: $machine',
+        message: '${t.title} (${t.intervalText}). Mark it done on the '
+            'Maintenance screen once it has been done.',
+        severity: AlertSeverity.warning,
+      );
+    }
+    final stale = _alerts
+        .where((a) =>
+            a.id.startsWith(_maintenancePrefix) && !due.containsKey(a.id))
+        .map((a) => a.id)
+        .toList();
+    for (final id in stale) {
+      await resolve(id);
+    }
+  }
+
   void _recheckPanelHealth() {
     checkPanelHealth();
   }
@@ -387,5 +432,5 @@ class AlertService extends ChangeNotifier {
   }
 }
 
-final alertService =
-    AlertService(deviceService, tariffService, panel: panelService);
+final alertService = AlertService(deviceService, tariffService,
+    panel: panelService, maintenance: maintenanceService);

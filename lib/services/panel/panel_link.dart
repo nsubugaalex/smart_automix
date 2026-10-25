@@ -81,6 +81,15 @@ class MachineEventReport extends PanelTelemetry {
   final String src;
 }
 
+/// A machine's total running time, counted by the panel.
+@immutable
+class MachineHoursReport extends PanelTelemetry {
+  const MachineHoursReport(this.machineId, {required this.seconds});
+
+  final String machineId;
+  final int seconds;
+}
+
 /// The panel's supply protection state.
 @immutable
 class SupplyStatusReport extends PanelTelemetry {

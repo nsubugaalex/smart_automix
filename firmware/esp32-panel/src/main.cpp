@@ -261,6 +261,84 @@ void watchSource(uint32_t now) {
   publishSource();
 }
 
+// ---- Running hours -----------------------------------------------------------
+//
+// Each machine's total running time (while it is really on: the contactor
+// feedback if fitted, otherwise the relay), for the app's maintenance
+// reminders. Kept in flash per machine ID, so it survives restarts and
+// changes to the order of MACHINES; published retained on
+// machines/<id>/hours.
+
+constexpr uint32_t kHoursPublishMs = 60 * 1000;
+constexpr uint32_t kHoursSaveMs = 10 * 60 * 1000;
+
+Preferences hoursStore;
+uint32_t runSeconds[kMachineCount] = {};
+uint32_t runMsCarry[kMachineCount] = {};  // part-seconds not yet counted
+bool wasRunning[kMachineCount] = {};
+uint32_t lastHoursTick = 0;
+uint32_t lastHoursPublish = 0;
+uint32_t lastHoursSave = 0;
+
+// A short flash key for a machine ID (NVS keys are at most 15 characters).
+String hoursKey(const char *id) {
+  uint32_t h = 2166136261u;  // FNV-1a
+  for (const char *c = id; *c; c++) h = (h ^ static_cast<uint8_t>(*c)) * 16777619u;
+  char key[12];
+  snprintf(key, sizeof(key), "h%08lx", static_cast<unsigned long>(h));
+  return String(key);
+}
+
+void loadHours() {
+  hoursStore.begin("hours", /*readOnly=*/false);
+  for (size_t i = 0; i < kMachineCount; i++) {
+    runSeconds[i] = hoursStore.getULong(hoursKey(MACHINES[i].id).c_str(), 0);
+  }
+}
+
+void saveHours() {
+  for (size_t i = 0; i < kMachineCount; i++) {
+    hoursStore.putULong(hoursKey(MACHINES[i].id).c_str(), runSeconds[i]);
+  }
+}
+
+void publishHours() {
+  if (!mqtt.connected()) return;
+  for (size_t i = 0; i < kMachineCount; i++) {
+    char payload[32];
+    snprintf(payload, sizeof(payload), "{\"s\":%lu}",
+             static_cast<unsigned long>(runSeconds[i]));
+    mqtt.publish(kMachinesPrefix + MACHINES[i].id + "/hours", payload,
+                 /*retained=*/true, /*qos=*/1);
+  }
+}
+
+void countHours(uint32_t now) {
+  const uint32_t elapsed = lastHoursTick == 0 ? 0 : now - lastHoursTick;
+  lastHoursTick = now;
+  bool stopped = false;
+  for (size_t i = 0; i < kMachineCount; i++) {
+    const bool running = actualState(machines[i]);
+    if (running) {
+      runMsCarry[i] += elapsed;
+      runSeconds[i] += runMsCarry[i] / 1000;
+      runMsCarry[i] %= 1000;
+    } else if (wasRunning[i]) {
+      stopped = true;
+    }
+    wasRunning[i] = running;
+  }
+  // Save when a machine stops, so a power cut doesn't lose its last run.
+  if (stopped || now - lastHoursSave >= kHoursSaveMs) {
+    lastHoursSave = now;
+    saveHours();
+  }
+  if (stopped || now - lastHoursPublish >= kHoursPublishMs) {
+    lastHoursPublish = now;
+    publishHours();
+  }
+}
+
 // ---- Supply protection -------------------------------------------------------
 //
 // Low voltage, high voltage and a lost phase burn motors. The incomer meter
@@ -847,6 +925,7 @@ void connectMqtt() {
   publishSource();
   publishSupply();
   publishSupplyEvents();
+  publishHours();
   publishEnergy(millis());
   log("online as panel " PANEL_ID);
 }
@@ -1022,6 +1101,7 @@ void setup() {
   }
   loadEnergy();
   loadSupply();
+  loadHours();
 
 #if MQTT_USE_TLS
   if (strlen(MQTT_CA_CERT) > 0) {
@@ -1061,6 +1141,7 @@ void loop() {
   watchFeedback(now);
   watchSource(now);
   watchPowerCuts(now);
+  countHours(now);
   stepSensors(now);
   delay(10);
 }

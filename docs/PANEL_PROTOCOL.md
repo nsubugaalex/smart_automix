@@ -25,6 +25,7 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/machines/<machine>/set` | app → panel | `{"cmd": "ON", "ts": 1792656000000}` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/state` | panel → app | `ON` or `OFF` | 1 | **yes** |
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
+| `smartautomix/<panel>/machines/<machine>/hours` | panel → app | `{"s": 720000}` | 1 | **yes** |
 | `smartautomix/<panel>/machines/<machine>/event` | panel → app | `{"on": false, "cause": "trip", "by": "", "src": ""}` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
@@ -82,6 +83,12 @@ Controllers should also accept a plain
 
    Without events, the app still logs each change, but can only say it was
    made "at the panel or from another phone".
+7. **Count running hours** (optional, for maintenance reminders). Keep
+   each machine's total running seconds in non-volatile memory (counting
+   while it's really on) and publish them retained to its `hours` topic as
+   `{"s": <seconds>}`, about once a minute and when it stops. Without
+   this, the app counts hours itself, but only while it can see the
+   machine running.
 
 ## Power and energy readings
 

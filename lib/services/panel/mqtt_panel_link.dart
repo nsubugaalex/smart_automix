@@ -74,6 +74,7 @@ class MqttPanelLink extends PanelLink {
         ..subscribe(topics.allMachineStates)
         ..subscribe(topics.allMachinePower)
         ..subscribe(topics.allMachineEvents)
+        ..subscribe(topics.allMachineHours)
         ..subscribe(topics.meter)
         ..subscribe(topics.allEnergyDays)
         ..subscribe(topics.source)
@@ -139,6 +140,14 @@ class MqttPanelLink extends PanelLink {
           generatorKwh: day.generatorKwh,
           generatorSeconds: day.generatorSeconds,
         ));
+      }
+      return;
+    }
+    final hoursId = topics.machineIdFrom(message.topic, suffix: 'hours');
+    if (hoursId != null) {
+      final seconds = PanelTopics.parseHours(message.payload);
+      if (seconds != null) {
+        _telemetry.add(MachineHoursReport(hoursId, seconds: seconds));
       }
       return;
     }

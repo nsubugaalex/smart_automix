@@ -4,6 +4,7 @@ import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/common/supply_status.dart';
+import '../maintenance/maintenance_screen.dart';
 import '../notifications/activity_screen.dart';
 import '../../widgets/custom/uganda_theme.dart';
 import 'control_actions.dart';
@@ -43,6 +44,7 @@ class DashboardBody extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SupplyBanner(padding: EdgeInsets.only(bottom: 16)),
+                  const MaintenanceDueCard(),
                   _buildWelcomeSection(context, deviceService),
                   const SizedBox(height: 24),
                   _buildQuickStats(context, deviceService),
