@@ -106,6 +106,21 @@ constexpr uint32_t kEnergySaveMs = 10 * 60 * 1000;
 
 enum class Request : int8_t { None, Off, On };
 
+// Why a machine changed, for the app's activity log.
+enum class Cause : uint8_t { Command, Trip, Panel, Supply, NoClose, Refused };
+
+const char *causeName(Cause c) {
+  switch (c) {
+    case Cause::Command: return "command";
+    case Cause::Trip: return "trip";
+    case Cause::Panel: return "panel";
+    case Cause::Supply: return "supply";
+    case Cause::NoClose: return "no_close";
+    case Cause::Refused: return "refused";
+  }
+  return "command";
+}
+
 struct Machine {
   const MachineConfig *cfg = nullptr;
   PZEM004Tv30 *pzem = nullptr;
@@ -121,6 +136,10 @@ struct Machine {
   bool feedbackOn = false;
   bool feedbackRaw = false;
   uint32_t feedbackChangedAt = 0;
+  // Who asked for the pending change (from the command), and why.
+  Cause cause = Cause::Command;
+  char by[33] = "";
+  char src[17] = "";
 };
 
 Machine machines[kMachineCount];
@@ -173,6 +192,26 @@ void publishState(Machine &m) {
   if (!mqtt.connected()) return;
   mqtt.publish(kMachinesPrefix + m.cfg->id + "/state", on ? "ON" : "OFF",
                /*retained=*/true, /*qos=*/1);
+}
+
+// Tell the app why the machine changed. Not retained: the app logs these
+// as they happen.
+void publishEvent(const Machine &m, bool on, Cause cause) {
+  if (!mqtt.connected()) return;
+  char payload[160];
+  snprintf(payload, sizeof(payload),
+           "{\"on\":%s,\"cause\":\"%s\",\"by\":\"%s\",\"src\":\"%s\"}",
+           on ? "true" : "false", causeName(cause),
+           cause == Cause::Command || cause == Cause::NoClose ||
+                   cause == Cause::Refused
+               ? m.by
+               : "",
+           cause == Cause::Command || cause == Cause::NoClose ||
+                   cause == Cause::Refused
+               ? m.src
+               : "");
+  mqtt.publish(kMachinesPrefix + m.cfg->id + "/event", payload,
+               /*retained=*/false, /*qos=*/1);
 }
 
 void publishPower(Machine &m) {
@@ -391,7 +430,10 @@ void tripSupply(SupplyState fault, uint8_t phase) {
   openEvent = true;
   // Switch everything off through the normal path, so the app gets the
   // usual state reports. This also cancels starts still waiting.
-  for (auto &m : machines) m.request = Request::Off;
+  for (auto &m : machines) {
+    m.request = Request::Off;
+    m.cause = Cause::Supply;
+  }
   log(String("SUPPLY FAULT: ") + supplyStateName(fault) + " on phase " +
       (phase + 1) + ", all machines switched off");
   saveSupplyLog();
@@ -701,14 +743,29 @@ int64_t epochMs() {
 
 // The app sends {"cmd":"ON","ts":<ms since 1970>}. Plain ON/OFF is
 // accepted too (manual testing, older apps); its sentAtMs is 0.
-bool parseCommand(const String &payload, Request &request, int64_t &sentAtMs) {
+// Copy [in] to [out] keeping only plain printable characters, so a name
+// can't break the event JSON.
+void copySafe(const char *in, char *out, size_t size) {
+  size_t n = 0;
+  for (; in && *in && n + 1 < size; in++) {
+    const char c = *in;
+    if (c >= 0x20 && c < 0x7f && c != '"' && c != '\\') out[n++] = c;
+  }
+  out[n] = '\0';
+}
+
+bool parseCommand(const String &payload, Request &request, int64_t &sentAtMs,
+                  char *by, char *src) {
   String cmd = payload;
   sentAtMs = 0;
+  by[0] = src[0] = '\0';
   if (payload.startsWith("{")) {
     JsonDocument doc;
     if (deserializeJson(doc, payload)) return false;
     cmd = doc["cmd"] | "";
     sentAtMs = doc["ts"] | static_cast<int64_t>(0);
+    copySafe(doc["by"] | "", by, 33);
+    copySafe(doc["src"] | "", src, 17);
   }
   cmd.trim();
   cmd.toUpperCase();
@@ -752,12 +809,16 @@ void onMessage(String &topic, String &payload) {
       topic.substring(kMachinesPrefix.length(), topic.length() - 4);
   Request request;
   int64_t sentAtMs;
-  if (!parseCommand(payload, request, sentAtMs)) return;
+  char by[33], src[17];
+  if (!parseCommand(payload, request, sentAtMs, by, src)) return;
   for (auto &m : machines) {
     if (id == m.cfg->id) {
       // No state report: the app then shows "did not confirm".
       if (isStaleStart(id, request, sentAtMs)) return;
       m.request = request;
+      m.cause = Cause::Command;
+      strcpy(m.by, by);
+      strcpy(m.src, src);
       return;
     }
   }
@@ -826,6 +887,7 @@ void processRequests(uint32_t now) {
         log(String("machine ") + m.cfg->id + ": start refused, supply " +
             supplyStateName(supplyState));
         publishState(m);  // still off; the app sees why on supply
+        publishEvent(m, false, Cause::Refused);
         continue;
       }
       if (startedAny && now - lastStartAt < MIN_START_GAP_MS) {
@@ -847,6 +909,7 @@ void processConfirmations(uint32_t now) {
       continue;
     }
     m.confirmPending = false;
+    bool noClose = false;
     if (hasFeedback(m)) {
       // Take the contact as it is now, without waiting for the debounce.
       m.feedbackOn = m.feedbackRaw = readFeedback(m);
@@ -855,9 +918,17 @@ void processConfirmations(uint32_t now) {
         log(String("machine ") + m.cfg->id +
             ": contactor did not close; check the coil supply and E-stop");
         setRelay(m, false);
+        noClose = true;
       }
     }
+    const bool wasOn = m.reportedOn;
     publishState(m);
+    if (noClose) {
+      publishEvent(m, false, Cause::NoClose);
+    } else if (actualState(m) != wasOn) {
+      publishEvent(m, actualState(m), m.cause);
+    }
+    m.cause = Cause::Command;
     publishPower(m);  // the app sees the new draw straight away
   }
 }
@@ -877,16 +948,19 @@ void watchFeedback(uint32_t now) {
       continue;
     }
     m.feedbackOn = raw;
+    Cause cause = Cause::Panel;
     if (!raw && m.relayOn) {
       // Latch off, so the machine doesn't restart when the overload relay
       // or E-stop is reset.
       setRelay(m, false);
+      cause = Cause::Trip;
       log(String("machine ") + m.cfg->id + ": contactor dropped out (trip?)");
     } else {
       log(String("machine ") + m.cfg->id + ": switched " +
           (raw ? "ON" : "OFF") + " at the panel");
     }
     publishState(m);
+    publishEvent(m, raw, cause);
     publishPower(m);
   }
 }

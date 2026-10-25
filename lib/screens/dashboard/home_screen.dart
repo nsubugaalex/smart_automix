@@ -4,6 +4,7 @@ import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/common/supply_status.dart';
+import '../notifications/activity_screen.dart';
 import '../../widgets/custom/uganda_theme.dart';
 import 'control_actions.dart';
 
@@ -47,6 +48,8 @@ class DashboardBody extends StatelessWidget {
                   _buildQuickStats(context, deviceService),
                   const SizedBox(height: 24),
                   _buildActiveDevicesSection(context, deviceService),
+                  const SizedBox(height: 24),
+                  const RecentActivityCard(),
                   const SizedBox(height: 24),
                   Text(
                     'All Machines',

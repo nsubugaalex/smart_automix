@@ -11,6 +11,7 @@ import '../../models/supply.dart';
 /// |-----------------------------------------|-------------|---------------|----------|
 /// | `smartautomix/<panel>/machines/<id>/set`   | app → panel | `{"cmd": "ON", "ts": <ms>}` | no |
 /// | `smartautomix/<panel>/machines/<id>/state` | panel → app | `ON` / `OFF`  | yes      |
+/// | `smartautomix/<panel>/machines/<id>/event` | panel → app | `{"on": false, "cause": "trip", "by": "", "src": ""}` | no |
 /// | `smartautomix/<panel>/status`              | panel → app | `online` / `offline` (last will) | yes |
 /// | `smartautomix/<panel>/machines/<id>/power` | panel → app | `{"w": 7100, "a": 12.4}` | no |
 /// | `smartautomix/<panel>/meter`               | panel → app | `{"w": 15200, "kwh": 48211.7}` | no |
@@ -91,6 +92,10 @@ class PanelTopics {
   String command(String machineId) => '$_machines$machineId/set';
   String state(String machineId) => '$_machines$machineId/state';
   String power(String machineId) => '$_machines$machineId/power';
+  String event(String machineId) => '$_machines$machineId/event';
+
+  /// Subscription filter matching every machine's event topic.
+  String get allMachineEvents => '$_machines+/event';
 
   /// The machine ID in a `.../machines/<id>/<suffix>` topic, or null.
   String? machineIdFrom(String topic, {required String suffix}) {
@@ -102,13 +107,50 @@ class PanelTopics {
     return id.isEmpty || id.contains('/') ? null : id;
   }
 
-  /// A command payload: `{"cmd": "ON", "ts": <ms since 1970>}`. The
-  /// timestamp lets the panel drop an `ON` that arrives late.
-  static String encodeCommand({required bool on, required DateTime issuedAt}) =>
+  /// A command payload: `{"cmd": "ON", "ts": 1792616405123, "by": "Grace",
+  /// "src": "3f9a1c2e"}`: the time sent (ms since 1970), the operator and
+  /// the app install. The timestamp lets the panel drop an `ON` that
+  /// arrives late; `by` and `src` come back in its events.
+  static String encodeCommand({
+    required bool on,
+    required DateTime issuedAt,
+    String by = '',
+    String src = '',
+  }) =>
       jsonEncode({
         'cmd': on ? PanelTopics.on : off,
-        'ts': issuedAt.millisecondsSinceEpoch
+        'ts': issuedAt.millisecondsSinceEpoch,
+        if (by.isNotEmpty) 'by': by,
+        if (src.isNotEmpty) 'src': src,
       });
+
+  /// Parse a machine event: `{"on", "cause", "by", "src"}`; null if invalid.
+  static ({bool on, MachineEventCause cause, String by, String src})?
+      parseMachineEvent(String payload) {
+    final json = _decodeObject(payload);
+    final on = json?['on'];
+    final causeName = json?['cause'];
+    if (on is! bool || causeName is! String) return null;
+    final cause = MachineEventCause.values
+        .where((c) => c.wireName == causeName)
+        .firstOrNull;
+    if (cause == null) return null;
+    String text(Object? v) => v is String ? v : '';
+    return (
+      on: on,
+      cause: cause,
+      by: text(json!['by']),
+      src: text(json['src'])
+    );
+  }
+
+  static String encodeMachineEvent({
+    required bool on,
+    required MachineEventCause cause,
+    String by = '',
+    String src = '',
+  }) =>
+      jsonEncode({'on': on, 'cause': cause.wireName, 'by': by, 'src': src});
 
   /// Parse a command payload: the JSON form from [encodeCommand], or a plain
   /// `ON`/`OFF` (manual testing, older apps). Null if invalid.
@@ -120,8 +162,12 @@ class PanelTopics {
     final on = cmd is String ? parseSwitch(cmd) : null;
     if (on == null) return null;
     final ts = json!['ts'];
+    final by = json['by'];
+    final src = json['src'];
     return PanelCommand(
       on: on,
+      by: by is String ? by : '',
+      src: src is String ? src : '',
       issuedAt: ts is int && ts > 0
           ? DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true)
           : null,
@@ -328,7 +374,12 @@ class PanelTopics {
 
 /// An on/off command as received by the panel.
 class PanelCommand {
-  const PanelCommand({required this.on, this.issuedAt});
+  const PanelCommand(
+      {required this.on, this.issuedAt, this.by = '', this.src = ''});
+
+  /// Who sent it (operator name) and from which app install.
+  final String by;
+  final String src;
 
   /// How far a command's timestamp may be from the panel's clock. Longer
   /// than the app's 5 s confirm wait, plus room for clocks that differ a
@@ -348,4 +399,30 @@ class PanelCommand {
     if (!on || issuedAt == null) return false;
     return now.difference(issuedAt!).abs() > maxAge;
   }
+}
+
+/// Why a machine changed, as the panel reports it.
+enum MachineEventCause {
+  /// A command from an app.
+  command,
+
+  /// The contactor dropped out by itself (overload relay, E-stop).
+  trip,
+
+  /// Switched at the panel itself.
+  panel,
+
+  /// Switched off by supply protection.
+  supply,
+
+  /// Told to start, but the contactor didn't close.
+  noClose,
+
+  /// A start refused because the supply was bad or settling.
+  refused;
+
+  String get wireName => switch (this) {
+        MachineEventCause.noClose => 'no_close',
+        _ => name,
+      };
 }

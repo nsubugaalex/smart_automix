@@ -25,6 +25,7 @@ broker. The topic names are defined in code in
 | `smartautomix/<panel>/machines/<machine>/set` | app → panel | `{"cmd": "ON", "ts": 1792656000000}` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/state` | panel → app | `ON` or `OFF` | 1 | **yes** |
 | `smartautomix/<panel>/status` | panel → app | `online` or `offline` | 1 | **yes** |
+| `smartautomix/<panel>/machines/<machine>/event` | panel → app | `{"on": false, "cause": "trip", "by": "", "src": ""}` | 1 | no |
 | `smartautomix/<panel>/machines/<machine>/power` | panel → app | `{"w": 6800, "a": 11.2}` | 0 | no |
 | `smartautomix/<panel>/meter` | panel → app | `{"w": 9100, "kwh": 48211.7}` | 0 | no |
 | `smartautomix/<panel>/energy/<YYYY-MM-DD>` | panel → app | `{"kwh": 79.9, "reg": 48211.7, "first": 1792616405, "last": 1792702795, "g": 4.2, "gs": 3600, "h": [24 values]}` | 1 | **yes** |
@@ -34,7 +35,10 @@ broker. The topic names are defined in code in
 
 `state` and `status` payloads are plain text, matched case-insensitively.
 A command's `cmd` is `ON` or `OFF`, and `ts` is when the app sent it, in
-milliseconds since 1970 (UTC). Controllers should also accept a plain
+milliseconds since 1970 (UTC). Commands may also carry `by` (the
+operator's name, from **Settings → Profile**) and `src` (a random tag for
+the app install); the controller only passes them back in its events.
+Controllers should also accept a plain
 `ON`/`OFF` command payload, which is handy for testing with
 `mosquitto_pub`. The `power` and `meter` topics are optional and only used if the panel has sensors
 (see [Power and energy readings](#power-and-energy-readings)).
@@ -65,6 +69,19 @@ milliseconds since 1970 (UTC). Controllers should also accept a plain
      check while the controller's clock isn't set (no NTP yet).
 5. **Report local changes too.** If a machine is switched at the panel, or
    tripped by a breaker, publish its new state so the app stays correct.
+6. **Say why it changed** (optional, for the app's activity log). After
+   each state change, publish to the machine's `event` topic, not retained:
+   - `on`: the new state;
+   - `cause`: `command` (from an app), `trip` (the contactor dropped out:
+     overload relay or E-stop), `panel` (switched at the panel),
+     `supply` (supply protection), `no_close` (told to start, but the
+     contactor didn't close) or `refused` (a start refused because of the
+     supply);
+   - `by` and `src`: copied from the command, for `command`, `no_close` and
+     `refused`; empty otherwise.
+
+   Without events, the app still logs each change, but can only say it was
+   made "at the panel or from another phone".
 
 ## Power and energy readings
 

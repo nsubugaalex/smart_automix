@@ -232,6 +232,8 @@ void main() {
           SupplySourceReport() => 'source:${t.onGenerator ? 'gen' : 'grid'}',
           SupplyStatusReport() => 'supply:${t.state.wireName}',
           SupplyEventsReport() => 'events:${t.events.length}',
+          MachineEventReport() =>
+            'event:${t.machineId}:${t.cause.wireName}:${t.by}',
         }));
 
     transport
@@ -251,6 +253,9 @@ void main() {
       ..deliver(topics.supply, '{"state": "phase_loss", "since": 1792616405}')
       ..deliver(topics.supplyEvents,
           '[{"kind": "undervoltage", "phase": 2, "from": 1792616405, "to": 0, "min": 183.2, "max": 231}, {"kind": "bogus"}]')
+      ..deliver(topics.event('4'),
+          '{"on": false, "cause": "trip", "by": "", "src": ""}')
+      ..deliver(topics.event('4'), '{"on": false, "cause": "magic"}')
       ..deliver(topics.source, 'generator')
       ..deliver(topics.source, 'solar')
       ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
@@ -263,6 +268,7 @@ void main() {
       'day:2026-10-21:79.9kWh/gen 7.9kWh/h24',
       'supply:phase_loss',
       'events:1',
+      'event:4:trip:',
       'source:gen',
     ]);
   });

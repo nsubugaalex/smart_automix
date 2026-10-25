@@ -100,6 +100,15 @@ Future<void> main(List<String> args) async {
         retain: retain);
   }
 
+  // Why a machine changed, like the firmware's event messages.
+  void publishEvent(String id, bool on, MachineEventCause cause,
+          {String by = '', String src = ''}) =>
+      publish(
+          topics.event(id),
+          PanelTopics.encodeMachineEvent(
+              on: on, cause: cause, by: by, src: src),
+          retain: false);
+
   // Machines currently switched on, seeded from our own retained state
   // reports so a restarted simulator carries on where it left off.
   final running = <String>{};
@@ -232,6 +241,7 @@ Future<void> main(List<String> args) async {
       for (final id in running.toList()) {
         running.remove(id);
         publish(topics.state(id), PanelTopics.off);
+        publishEvent(id, false, MachineEventCause.supply);
       }
       _log('SUPPLY FAULT: ${seen.wireName} on phase $phase, all machines '
           'switched off');
@@ -428,6 +438,8 @@ Future<void> main(List<String> args) async {
       if (on && !supply.allowsStart) {
         _log('machine $machineId: start refused, supply ${supply.wireName}');
         publish(topics.state(machineId), PanelTopics.off);
+        publishEvent(machineId, false, MachineEventCause.refused,
+            by: command.by, src: command.src);
         continue;
       }
 
@@ -436,10 +448,16 @@ Future<void> main(List<String> args) async {
             'machine $machineId: ${on ? 'ON' : 'OFF'} received — ignored (simulated fault)');
         continue;
       }
-      _log('machine $machineId: switching ${on ? 'ON' : 'OFF'}…');
+      _log('machine $machineId: switching ${on ? 'ON' : 'OFF'}'
+          '${command.by.isEmpty ? '' : ' (by ${command.by})'}…');
       Timer(delay, () {
+        final changed = running.contains(machineId) != on;
         on ? running.add(machineId) : running.remove(machineId);
         publish(topics.state(machineId), on ? PanelTopics.on : PanelTopics.off);
+        if (changed) {
+          publishEvent(machineId, on, MachineEventCause.command,
+              by: command.by, src: command.src);
+        }
         // Like the firmware: report the new draw straight away.
         if (sensors) publishReadings();
         _log('machine $machineId: reported ${on ? 'ON' : 'OFF'}');

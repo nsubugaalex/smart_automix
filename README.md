@@ -45,6 +45,12 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
   machines itself). The app shows why on the Dashboard and Control tabs,
   alerts you, and keeps a log of faults and power cuts with their times
   and voltages, which you can copy as CSV for a complaint to UEDCL.
+- **Activity log**: a timeline of who switched what and when, trips,
+  contactors that didn't close, changes made at the panel, supply faults,
+  generator starts and the panel going offline, on the Dashboard and in
+  full under **Activity** (with filters and CSV copy). Each phone sends
+  the operator's name from **Settings → Profile** with its commands, so
+  with several operators every phone shows who did what.
 - **Panel setup**: under **Settings → Panel setup**, enter how the panel
   is wired and copy a ready-made `panel_config.h` for the firmware, with
   the panel ID, broker and machine IDs filled in from the app. It only

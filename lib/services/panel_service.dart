@@ -6,6 +6,7 @@ import 'panel/mqtt_panel_link.dart';
 import 'panel/mqtt_transport.dart';
 import 'panel/panel_link.dart';
 import 'panel/panel_settings.dart';
+import 'operator_profile.dart';
 import 'panel/panel_topics.dart';
 
 typedef PanelLinkFactory = PanelLink Function(PanelSettings settings);
@@ -61,6 +62,7 @@ class PanelService extends ChangeNotifier {
     return MqttPanelLink(
       topics: PanelTopics(settings.panelId),
       transport: MqttClientTransport(settings, clientId: clientId),
+      sender: () => (by: operatorProfile.name, src: operatorProfile.installId),
     );
   }
 

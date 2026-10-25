@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../models/supply.dart';
+import 'panel_topics.dart';
 
 /// How the app is currently linked to the switch-panel hardware.
 enum PanelLinkStatus {
@@ -57,6 +58,27 @@ class MeterReport extends PanelTelemetry {
 
   /// Voltage of each incomer phase; null for a phase that didn't answer.
   final List<double?>? volts;
+}
+
+/// Why a machine changed, from the panel. Delivered as telemetry so it
+/// flows with the panel's other reports; the activity log uses it.
+@immutable
+class MachineEventReport extends PanelTelemetry {
+  const MachineEventReport(
+    this.machineId, {
+    required this.on,
+    required this.cause,
+    this.by = '',
+    this.src = '',
+  });
+
+  final String machineId;
+  final bool on;
+  final MachineEventCause cause;
+
+  /// For commands: the operator's name and app install that sent it.
+  final String by;
+  final String src;
 }
 
 /// The panel's supply protection state.

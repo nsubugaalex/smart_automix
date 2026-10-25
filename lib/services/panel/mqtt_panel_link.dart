@@ -11,12 +11,17 @@ class MqttPanelLink extends PanelLink {
     required this.topics,
     required MqttTransport transport,
     DateTime Function() clock = DateTime.now,
+    ({String by, String src}) Function()? sender,
   })  : _transport = transport,
-        _clock = clock;
+        _clock = clock,
+        _sender = sender;
 
   final PanelTopics topics;
   final MqttTransport _transport;
   final DateTime Function() _clock;
+
+  /// Who is sending commands (operator name, app install), if known.
+  final ({String by, String src}) Function()? _sender;
   final _reports = StreamController<MachineStateReport>.broadcast();
   final _telemetry = StreamController<PanelTelemetry>.broadcast();
   StreamSubscription<MqttTextMessage>? _messagesSub;
@@ -68,6 +73,7 @@ class MqttPanelLink extends PanelLink {
         ..subscribe(topics.status)
         ..subscribe(topics.allMachineStates)
         ..subscribe(topics.allMachinePower)
+        ..subscribe(topics.allMachineEvents)
         ..subscribe(topics.meter)
         ..subscribe(topics.allEnergyDays)
         ..subscribe(topics.source)
@@ -136,6 +142,15 @@ class MqttPanelLink extends PanelLink {
       }
       return;
     }
+    final eventId = topics.machineIdFrom(message.topic, suffix: 'event');
+    if (eventId != null) {
+      final event = PanelTopics.parseMachineEvent(message.payload);
+      if (event != null) {
+        _telemetry.add(MachineEventReport(eventId,
+            on: event.on, cause: event.cause, by: event.by, src: event.src));
+      }
+      return;
+    }
     final powerId = topics.machineIdFrom(message.topic, suffix: 'power');
     if (powerId != null) {
       final power = PanelTopics.parsePower(message.payload);
@@ -156,8 +171,14 @@ class MqttPanelLink extends PanelLink {
   Future<bool> sendCommand(String machineId, {required bool on}) async {
     if (_status != PanelLinkStatus.connected) return false;
     try {
-      _transport.publish(topics.command(machineId),
-          PanelTopics.encodeCommand(on: on, issuedAt: _clock()));
+      final sender = _sender?.call();
+      _transport.publish(
+          topics.command(machineId),
+          PanelTopics.encodeCommand(
+              on: on,
+              issuedAt: _clock(),
+              by: sender?.by ?? '',
+              src: sender?.src ?? ''));
       return true;
     } catch (_) {
       return false;

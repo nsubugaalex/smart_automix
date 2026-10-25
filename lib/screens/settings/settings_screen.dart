@@ -43,6 +43,7 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.person),
             title: const Text('Profile'),
+            subtitle: const Text('Your name in the activity log'),
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),

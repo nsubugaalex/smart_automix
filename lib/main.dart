@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'services/activity_log.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/operator_profile.dart';
 import 'services/panel_service.dart';
 import 'services/security_service.dart';
 import 'services/tariff_service.dart';
@@ -10,6 +12,7 @@ import 'widgets/custom/uganda_theme.dart';
 
 // Import screens
 import 'screens/main_shell.dart';
+import 'screens/notifications/activity_screen.dart';
 import 'screens/notifications/alerts_screen.dart';
 import 'screens/settings/network_screen.dart';
 import 'screens/settings/settings_screen.dart';
@@ -25,6 +28,14 @@ void main() async {
 }
 
 Future<void> _initializeServices() async {
+  // Who is using this phone (sent with commands for the activity log).
+  try {
+    await operatorProfile.init();
+  } catch (e, stackTrace) {
+    debugPrint('Operator profile initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
   // Load the switch-panel connection settings and start connecting in the
   // background (simulation mode unless an MQTT broker is configured).
   try {
@@ -68,6 +79,13 @@ Future<void> _initializeServices() async {
     debugPrint('Alert service initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');
   }
+
+  try {
+    await activityLog.init();
+  } catch (e, stackTrace) {
+    debugPrint('Activity log initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -101,6 +119,8 @@ class MyApp extends StatelessWidget {
         return _createRoute(const MainShell());
       case '/alerts':
         return _createRoute(const AlertsScreen());
+      case '/activity':
+        return _createRoute(const ActivityScreen());
       case '/settings':
         return _createRoute(const SettingsScreen());
       case '/network':

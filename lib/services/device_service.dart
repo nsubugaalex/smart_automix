@@ -14,6 +14,19 @@ import 'tariff_service.dart';
 
 /// A switch command that didn't take effect.
 @immutable
+
+/// A machine's confirmed switch, for the activity log.
+class MachineChange {
+  const MachineChange(this.device,
+      {required this.isOn, required this.requestedHere});
+
+  final DeviceModel device;
+  final bool isOn;
+
+  /// Whether this app sent the command that caused it.
+  final bool requestedHere;
+}
+
 class CommandFailure {
   const CommandFailure(this.machineName, this.reason);
 
@@ -84,6 +97,7 @@ class DeviceService extends ChangeNotifier {
   final Set<String> _awaitingConfirmation = {};
   final Map<String, Timer> _confirmTimers = {};
   final _failures = StreamController<CommandFailure>.broadcast();
+  final _changes = StreamController<MachineChange>.broadcast();
 
   // Getters
   List<DeviceModel> get devices => List.unmodifiable(_devices);
@@ -101,6 +115,10 @@ class DeviceService extends ChangeNotifier {
 
   /// Commands the panel refused, couldn't receive, or never confirmed.
   Stream<CommandFailure> get commandFailures => _failures.stream;
+
+  /// Every confirmed change in a machine's state, and whether this app
+  /// asked for it, for the activity log.
+  Stream<MachineChange> get machineChanges => _changes.stream;
 
   /// Get devices filtered by location
   List<DeviceModel> getDevicesByLocation(String location) {
@@ -439,6 +457,8 @@ class DeviceService extends ChangeNotifier {
 
     final device = _devices[index];
     if (device.isOn != report.isOn) {
+      _changes.add(
+          MachineChange(device, isOn: report.isOn, requestedHere: wasAwaiting));
       _devices[index] =
           device.copyWith(isOn: report.isOn, lastUsed: DateTime.now());
       _scheduleSave();
@@ -542,6 +562,7 @@ class DeviceService extends ChangeNotifier {
       timer.cancel();
     }
     _failures.close();
+    _changes.close();
     _saveDebouncer.dispose();
     super.dispose();
   }

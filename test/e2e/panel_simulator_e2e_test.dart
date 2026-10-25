@@ -14,7 +14,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smart_automix/models/device_model.dart';
 import 'package:smart_automix/models/supply.dart';
+import 'package:smart_automix/services/activity_log.dart';
 import 'package:smart_automix/services/device_service.dart';
+import 'package:smart_automix/services/operator_profile.dart';
 import 'package:smart_automix/services/panel/mqtt_transport.dart';
 import 'package:smart_automix/services/panel/panel_link.dart';
 import 'package:smart_automix/services/panel/panel_settings.dart';
@@ -52,6 +54,7 @@ void _endToEnd() {
   Process? simulator;
   PanelService? panel;
   late DeviceService devices;
+  late ActivityLog activity;
   final failures = <CommandFailure>[];
 
   /// Polls [condition] until it holds, failing after [timeout].
@@ -127,6 +130,9 @@ void _endToEnd() {
     await service.init();
     devices = DeviceService(TariffService(), panel: service);
     await devices.init();
+    activity = ActivityLog(
+        devices: devices, panel: service, profile: OperatorProfile());
+    await activity.init();
     devices.commandFailures.listen(failures.add);
     await eventually(() => panel!.isLive, 'the app to see the panel online');
   });
@@ -142,6 +148,17 @@ void _endToEnd() {
 
     await devices.turnOffDevice('1');
     await eventually(() => !isOn('1'), 'machine 1 to be confirmed OFF');
+    await Future<void>.delayed(ActivityLog.defaultExplainWait * 2);
+    expect(
+        activity.entries
+            .where((e) => e.machineId == '1')
+            .map((e) => e.text)
+            .toList(),
+        [
+          'This phone switched Machine 1 OFF',
+          'This phone switched Machine 1 ON'
+        ],
+        reason: "logged once each, the panel's echo not twice");
     expect(failures, isEmpty);
   });
 

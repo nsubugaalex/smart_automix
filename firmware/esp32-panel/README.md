@@ -154,6 +154,10 @@ the panel**.
 - **Trips:** if a contactor with feedback drops out by itself, the relay is
   switched off as well. The machine then stays off when the overload relay
   or E-stop is reset, until someone switches it on again.
+- **Activity events:** every change of a machine's state is reported
+  with its cause (a command, with the operator's name from the app; a trip;
+  switching at the panel; supply protection; a contactor that didn't
+  close; a refused start), for the app's activity log.
 - **Supply protection:** with incomer meter PZEMs, the controller watches
   each phase's voltage. If the supply stays below `UNDERVOLTAGE_V` (200 V)
   or above `OVERVOLTAGE_V` (255 V), loses a phase, or goes dead, for
