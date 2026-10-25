@@ -45,6 +45,10 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
   machines itself). The app shows why on the Dashboard and Control tabs,
   alerts you, and keeps a log of faults and power cuts with their times
   and voltages, which you can copy as CSV for a complaint to UEDCL.
+- **Panel setup**: under **Settings → Panel setup**, enter how the panel
+  is wired and copy a ready-made `panel_config.h` for the firmware, with
+  the panel ID, broker and machine IDs filled in from the app. It only
+  offers safe ESP32 pins and checks for pins or meter addresses used twice.
 - **UEDCL Tariff**: billing category and the rate from your current bill.
   You get a warning when the rate is over 90 days old (ERA adjusts tariffs
   quarterly), and an alert when the daily cost passes a limit you set.

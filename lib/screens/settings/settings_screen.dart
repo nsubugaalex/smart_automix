@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'network_screen.dart';
+import 'panel_setup_screen.dart';
 import 'security_screen.dart';
 import 'profile_screen.dart';
 
@@ -19,6 +20,15 @@ class SettingsScreen extends StatelessWidget {
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute<void>(builder: (_) => const NetworkScreen()),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.developer_board),
+            title: const Text('Panel setup'),
+            subtitle: const Text('Wiring and firmware configuration'),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const PanelSetupScreen()),
             ),
           ),
           ListTile(

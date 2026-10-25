@@ -101,19 +101,23 @@ split the modules over two serial ports. The firmware currently uses one
 
 1. Install [PlatformIO](https://platformio.org/install), either the VS Code
    extension or `pip install platformio`.
-2. Copy `include/panel_config.example.h` to `include/panel_config.h` and
-   set:
-   - your WiFi network and password;
-   - the broker address, username and password. Use your own broker (see
-     *Brokers and security* in the protocol doc), never a public one with
-     real machines;
-   - `PANEL_ID`, from the app under **Settings → Network**;
-   - the `MACHINES` table: each machine's ID exactly as the app lists it
-     (**Settings → Network → Topics for the panel controller**), its pins,
-     and its PZEM address.
+2. Create `include/panel_config.h`. The easiest way is from the app:
+   **Settings → Panel setup**. Enter the WiFi details and the panel's own
+   broker account, pick each machine's relay pin (and feedback pin and
+   PZEM address, if fitted), the incomer meter and the generator contact,
+   then tap **Copy panel_config.h** and paste it into the file. The app
+   fills in the panel ID, broker and machine IDs, so they always match,
+   and only offers pins that are safe to use. It won't copy until the
+   wiring checks out (no pin used twice, no clashing PZEM addresses).
+
+   To write it by hand instead, copy `include/panel_config.example.h` and
+   set the WiFi network, the broker (your own, never a public one with
+   real machines), `PANEL_ID` from **Settings → Network**, and the
+   `MACHINES` table with each machine's ID exactly as the app lists it.
 
    `panel_config.h` is git-ignored, so your passwords stay out of the
-   repository.
+   repository. After adding or removing machines in the app, generate it
+   again and reflash.
 3. **Give each PZEM its own address.** They all ship with the same one.
    For each module in turn:
    1. Connect only that module to the bus.
