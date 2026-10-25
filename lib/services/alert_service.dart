@@ -9,6 +9,7 @@ import '../models/supply.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
 import 'maintenance_service.dart';
+import 'prepaid_service.dart';
 import 'power_monitor.dart';
 import 'panel/panel_link.dart';
 import 'panel/panel_settings.dart';
@@ -27,14 +28,18 @@ import 'tariff_service.dart';
 /// Alerts screen everywhere.
 class AlertService extends ChangeNotifier {
   AlertService(this._devices, this._tariff,
-      {PanelService? panel, MaintenanceService? maintenance})
+      {PanelService? panel,
+      MaintenanceService? maintenance,
+      PrepaidService? prepaid})
       : _panel = panel,
-        _maintenance = maintenance;
+        _maintenance = maintenance,
+        _prepaid = prepaid;
 
   final DeviceService _devices;
   final TariffService _tariff;
   final PanelService? _panel;
   final MaintenanceService? _maintenance;
+  final PrepaidService? _prepaid;
   StreamSubscription<CommandFailure>? _failuresSub;
   StreamSubscription<SupplyEventChange>? _supplySub;
 
@@ -103,6 +108,7 @@ class AlertService extends ChangeNotifier {
     _tariff.addListener(_recheckTariffHealth);
     _panel?.addListener(_recheckPanelHealth);
     _maintenance?.addListener(_recheckMaintenance);
+    _prepaid?.addListener(_recheckPrepaid);
     _supplySub ??= _devices.supplyEventChanges.listen(onSupplyEvent);
     _failuresSub ??= _devices.commandFailures.listen(
       (failure) => add(
@@ -234,6 +240,7 @@ class AlertService extends ChangeNotifier {
     _tariff.removeListener(_recheckTariffHealth);
     _panel?.removeListener(_recheckPanelHealth);
     _maintenance?.removeListener(_recheckMaintenance);
+    _prepaid?.removeListener(_recheckPrepaid);
     _failuresSub?.cancel();
     _supplySub?.cancel();
     super.dispose();
@@ -336,6 +343,35 @@ class AlertService extends ChangeNotifier {
       ..addAll(overIds);
   }
 
+  void _recheckPrepaid() {
+    unawaited(checkPrepaid());
+  }
+
+  /// One alert while prepaid credit is low; cleared once a token is added
+  /// or a reading shows enough. Worded without the exact figure so it
+  /// isn't re-notified as the balance ticks down.
+  Future<void> checkPrepaid() async {
+    final prepaid = _prepaid;
+    if (prepaid == null) return;
+    const id = 'prepaid-low';
+    if (!prepaid.isLow) {
+      await resolve(id);
+      return;
+    }
+    final out = (prepaid.balance?.units ?? 1) <= 0;
+    await upsert(
+      id: id,
+      title: out ? 'Yaka credit may have run out' : 'Yaka credit running low',
+      message: out
+          ? 'The estimate has reached zero. Check the meter and buy a token '
+              'so the power doesn\'t go off mid-job.'
+          : 'Less than ${prepaid.warnDays} day${prepaid.warnDays == 1 ? '' : 's'} '
+              'of credit left at your usual use. Buy a token so the power '
+              'doesn\'t go off mid-job.',
+      severity: AlertSeverity.warning,
+    );
+  }
+
   void _recheckMaintenance() {
     unawaited(checkMaintenance());
   }
@@ -433,4 +469,6 @@ class AlertService extends ChangeNotifier {
 }
 
 final alertService = AlertService(deviceService, tariffService,
-    panel: panelService, maintenance: maintenanceService);
+    panel: panelService,
+    maintenance: maintenanceService,
+    prepaid: prepaidService);

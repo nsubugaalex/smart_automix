@@ -45,6 +45,13 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
   machines itself). The app shows why on the Dashboard and Control tabs,
   alerts you, and keeps a log of faults and power cuts with their times
   and voltages, which you can copy as CSV for a complaint to UEDCL.
+- **Yaka credit** (prepaid meters): record the tokens you buy and, now
+  and then, the units left on the Yaka meter. The app estimates the credit
+  left from the grid energy the panel measures (generator energy doesn't
+  count against it) and how many days it will last at your usual use,
+  warns you before it runs out, keeps the meter number to copy for mobile
+  money, and shows the average price you paid per unit. Without a supply
+  meter it estimates use from machine ratings and says so.
 - **Maintenance**: running hours per machine (counted by the panel) and
   the standby generator, with tasks due after a number of hours or days,
   e.g. "grease the mill bearings every 200 h". Suggested tasks for each

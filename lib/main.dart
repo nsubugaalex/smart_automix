@@ -5,6 +5,7 @@ import 'services/activity_log.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
 import 'services/maintenance_service.dart';
+import 'services/prepaid_service.dart';
 import 'services/operator_profile.dart';
 import 'services/panel_service.dart';
 import 'services/security_service.dart';
@@ -19,6 +20,7 @@ import 'screens/settings/network_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/devices/add_device_screen.dart';
 import 'screens/maintenance/maintenance_screen.dart';
+import 'screens/prepaid/prepaid_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -73,7 +75,14 @@ Future<void> _initializeServices() async {
     debugPrint('Stack trace: $stackTrace');
   }
 
-  // Running hours and maintenance tasks (before alerts, which watch them).
+  // Running hours and maintenance tasks, and prepaid credit (before
+  // alerts, which watch them).
+  try {
+    await prepaidService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Prepaid credit initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
   try {
     await maintenanceService.init();
   } catch (e, stackTrace) {
@@ -86,6 +95,7 @@ Future<void> _initializeServices() async {
     await alertService.init();
     await alertService.checkTariffHealth();
     await alertService.checkMaintenance();
+    await alertService.checkPrepaid();
   } catch (e, stackTrace) {
     debugPrint('Alert service initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');
@@ -134,6 +144,8 @@ class MyApp extends StatelessWidget {
         return _createRoute(const ActivityScreen());
       case '/maintenance':
         return _createRoute(const MaintenanceScreen());
+      case '/prepaid':
+        return _createRoute(const PrepaidScreen());
       case '/settings':
         return _createRoute(const SettingsScreen());
       case '/network':
