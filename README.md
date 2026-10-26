@@ -52,6 +52,15 @@ It runs on Android, iOS, web, Windows, macOS and Linux.
   warns you before it runs out, keeps the meter number to copy for mobile
   money, and shows the average price you paid per unit. Without a supply
   meter it estimates use from machine ratings and says so.
+- **Unusual running (machine health)**: the app learns each machine's
+  normal running current from the panel's readings (after 5 days of
+  running, ignoring start-up surges) and warns when it drifts, e.g. "the
+  mill has been drawing 25% more current than usual for 3 days of
+  running", with likely causes for that machine type (worn bearings, blunt
+  hammers, a slipping belt). It uses robust statistics (medians, not
+  averages one odd day can skew), works offline and always shows what it
+  compared. **Relearn normal** after a repair or new parts. Shown on the
+  Maintenance screen with a chart of each machine's daily current.
 - **Maintenance**: running hours per machine (counted by the panel) and
   the standby generator, with tasks due after a number of hours or days,
   e.g. "grease the mill bearings every 200 h". Suggested tasks for each

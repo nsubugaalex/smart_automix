@@ -4,7 +4,9 @@ import 'package:intl/intl.dart' show DateFormat, NumberFormat;
 
 import '../../models/maintenance.dart';
 import '../../services/device_service.dart';
+import '../../services/machine_health_service.dart';
 import '../../services/maintenance_service.dart';
+import '../../widgets/common/machine_health_view.dart';
 import '../../widgets/custom/uganda_theme.dart';
 
 final _hours = NumberFormat('#,##0');
@@ -20,7 +22,8 @@ class MaintenanceScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Maintenance')),
       body: ListenableBuilder(
-        listenable: Listenable.merge([maintenanceService, deviceService]),
+        listenable: Listenable.merge(
+            [maintenanceService, deviceService, machineHealthService]),
         builder: (context, _) {
           final machines = [
             for (final d in deviceService.devices)
@@ -98,6 +101,8 @@ class _MachineCard extends StatelessWidget {
               ],
             ),
             Text('Running hours, $source', style: theme.textTheme.bodySmall),
+            if (id != MaintenanceTask.generatorId)
+              MachineHealthView(machineId: id, type: type),
             for (final t in tasks) _TaskRow(task: t, hours: hours),
             Wrap(
               spacing: 8,

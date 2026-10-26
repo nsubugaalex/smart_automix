@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'services/activity_log.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/machine_health_service.dart';
 import 'services/maintenance_service.dart';
 import 'services/prepaid_service.dart';
 import 'services/operator_profile.dart';
@@ -84,6 +85,12 @@ Future<void> _initializeServices() async {
     debugPrint('Stack trace: $stackTrace');
   }
   try {
+    await machineHealthService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Machine health initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+  try {
     await maintenanceService.init();
   } catch (e, stackTrace) {
     debugPrint('Maintenance initialization failed: $e');
@@ -96,6 +103,7 @@ Future<void> _initializeServices() async {
     await alertService.checkTariffHealth();
     await alertService.checkMaintenance();
     await alertService.checkPrepaid();
+    await alertService.checkMachineHealth();
   } catch (e, stackTrace) {
     debugPrint('Alert service initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');

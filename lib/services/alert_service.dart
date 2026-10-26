@@ -4,10 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_model.dart';
+import '../models/machine_health.dart';
 import '../models/maintenance.dart';
 import '../models/supply.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
+import 'machine_health_service.dart';
 import 'maintenance_service.dart';
 import 'prepaid_service.dart';
 import 'power_monitor.dart';
@@ -30,16 +32,19 @@ class AlertService extends ChangeNotifier {
   AlertService(this._devices, this._tariff,
       {PanelService? panel,
       MaintenanceService? maintenance,
-      PrepaidService? prepaid})
+      PrepaidService? prepaid,
+      MachineHealthService? health})
       : _panel = panel,
         _maintenance = maintenance,
-        _prepaid = prepaid;
+        _prepaid = prepaid,
+        _health = health;
 
   final DeviceService _devices;
   final TariffService _tariff;
   final PanelService? _panel;
   final MaintenanceService? _maintenance;
   final PrepaidService? _prepaid;
+  final MachineHealthService? _health;
   StreamSubscription<CommandFailure>? _failuresSub;
   StreamSubscription<SupplyEventChange>? _supplySub;
 
@@ -109,6 +114,7 @@ class AlertService extends ChangeNotifier {
     _panel?.addListener(_recheckPanelHealth);
     _maintenance?.addListener(_recheckMaintenance);
     _prepaid?.addListener(_recheckPrepaid);
+    _health?.addListener(_recheckHealth);
     _supplySub ??= _devices.supplyEventChanges.listen(onSupplyEvent);
     _failuresSub ??= _devices.commandFailures.listen(
       (failure) => add(
@@ -241,6 +247,7 @@ class AlertService extends ChangeNotifier {
     _panel?.removeListener(_recheckPanelHealth);
     _maintenance?.removeListener(_recheckMaintenance);
     _prepaid?.removeListener(_recheckPrepaid);
+    _health?.removeListener(_recheckHealth);
     _failuresSub?.cancel();
     _supplySub?.cancel();
     super.dispose();
@@ -341,6 +348,48 @@ class AlertService extends ChangeNotifier {
     _overcurrent
       ..clear()
       ..addAll(overIds);
+  }
+
+  void _recheckHealth() {
+    unawaited(checkMachineHealth());
+  }
+
+  static const _healthPrefix = 'health-';
+
+  /// One alert per machine whose running current has drifted from its
+  /// normal, cleared once it's back (or relearned). Worded with the usual
+  /// current rounded, so it isn't re-notified as the figures move a little.
+  Future<void> checkMachineHealth() async {
+    final health = _health;
+    if (health == null) return;
+    final flagged = <String>{};
+    for (final d in _devices.devices) {
+      final s = health.statusOf(d.id);
+      final kind = s.finding;
+      if (kind == null) continue;
+      final id = '$_healthPrefix${d.id}';
+      flagged.add(id);
+      final what = switch (kind) {
+        HealthKind.high => 'drawing more current than usual',
+        HealthKind.low => 'drawing less current than usual',
+        HealthKind.erratic => 'drawing a much more uneven current than usual',
+      };
+      await upsert(
+        id: id,
+        title: 'Unusual running: ${d.name}',
+        message: '${d.name} has been $what for several days of running '
+            '(usually about ${s.usual!.round()} A). Worth checking for '
+            '${MachineHealthAnalysis.causes(kind, d.type)}.',
+        severity: AlertSeverity.warning,
+      );
+    }
+    final stale = _alerts
+        .where((a) => a.id.startsWith(_healthPrefix) && !flagged.contains(a.id))
+        .map((a) => a.id)
+        .toList();
+    for (final id in stale) {
+      await resolve(id);
+    }
   }
 
   void _recheckPrepaid() {
@@ -471,4 +520,5 @@ class AlertService extends ChangeNotifier {
 final alertService = AlertService(deviceService, tariffService,
     panel: panelService,
     maintenance: maintenanceService,
-    prepaid: prepaidService);
+    prepaid: prepaidService,
+    health: machineHealthService);
