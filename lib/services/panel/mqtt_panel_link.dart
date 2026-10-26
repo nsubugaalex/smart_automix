@@ -7,12 +7,23 @@ import 'panel_topics.dart';
 /// [PanelLink] that talks to the panel controller through an MQTT broker,
 /// using the topic contract in [PanelTopics].
 class MqttPanelLink extends PanelLink {
-  MqttPanelLink({required this.topics, required MqttTransport transport})
-      : _transport = transport;
+  MqttPanelLink({
+    required this.topics,
+    required MqttTransport transport,
+    DateTime Function() clock = DateTime.now,
+    ({String by, String src}) Function()? sender,
+  })  : _transport = transport,
+        _clock = clock,
+        _sender = sender;
 
   final PanelTopics topics;
   final MqttTransport _transport;
+  final DateTime Function() _clock;
+
+  /// Who is sending commands (operator name, app install), if known.
+  final ({String by, String src}) Function()? _sender;
   final _reports = StreamController<MachineStateReport>.broadcast();
+  final _telemetry = StreamController<PanelTelemetry>.broadcast();
   StreamSubscription<MqttTextMessage>? _messagesSub;
   StreamSubscription<bool>? _connectionSub;
 
@@ -32,6 +43,9 @@ class MqttPanelLink extends PanelLink {
 
   @override
   Stream<MachineStateReport> get stateReports => _reports.stream;
+
+  @override
+  Stream<PanelTelemetry> get telemetry => _telemetry.stream;
 
   @override
   Future<void> connect() async {
@@ -57,7 +71,15 @@ class MqttPanelLink extends PanelLink {
       // the app learns the panel's real state as soon as it connects.
       _transport
         ..subscribe(topics.status)
-        ..subscribe(topics.allMachineStates);
+        ..subscribe(topics.allMachineStates)
+        ..subscribe(topics.allMachinePower)
+        ..subscribe(topics.allMachineEvents)
+        ..subscribe(topics.allMachineHours)
+        ..subscribe(topics.meter)
+        ..subscribe(topics.allEnergyDays)
+        ..subscribe(topics.source)
+        ..subscribe(topics.supply)
+        ..subscribe(topics.supplyEvents);
       _update(PanelLinkStatus.connected);
     } catch (e) {
       if (_disposed) return;
@@ -74,6 +96,79 @@ class MqttPanelLink extends PanelLink {
       }
       return;
     }
+    if (message.topic == topics.meter) {
+      final meter = PanelTopics.parseMeter(message.payload);
+      if (meter != null) {
+        _telemetry.add(MeterReport(
+            watts: meter.watts,
+            kwh: meter.kwh,
+            volts: PanelTopics.parseMeterVolts(message.payload)));
+      }
+      return;
+    }
+    if (message.topic == topics.supply) {
+      final supply = PanelTopics.parseSupply(message.payload);
+      if (supply != null) {
+        _telemetry
+            .add(SupplyStatusReport(state: supply.state, since: supply.since));
+      }
+      return;
+    }
+    if (message.topic == topics.supplyEvents) {
+      final events = PanelTopics.parseSupplyEvents(message.payload);
+      if (events != null) _telemetry.add(SupplyEventsReport(events));
+      return;
+    }
+    if (message.topic == topics.source) {
+      final onGenerator = PanelTopics.parseSource(message.payload);
+      if (onGenerator != null) {
+        _telemetry.add(SupplySourceReport(onGenerator: onGenerator));
+      }
+      return;
+    }
+    final energyDate = topics.energyDateFrom(message.topic);
+    if (energyDate != null) {
+      final day = PanelTopics.parseEnergyDay(message.payload);
+      if (day != null) {
+        _telemetry.add(EnergyDayReport(
+          date: energyDate,
+          kwh: day.kwh,
+          registerKwh: day.registerKwh,
+          firstAt: day.firstAt,
+          lastAt: day.lastAt,
+          gridHourlyKwh: day.gridHourlyKwh,
+          generatorKwh: day.generatorKwh,
+          generatorSeconds: day.generatorSeconds,
+        ));
+      }
+      return;
+    }
+    final hoursId = topics.machineIdFrom(message.topic, suffix: 'hours');
+    if (hoursId != null) {
+      final seconds = PanelTopics.parseHours(message.payload);
+      if (seconds != null) {
+        _telemetry.add(MachineHoursReport(hoursId, seconds: seconds));
+      }
+      return;
+    }
+    final eventId = topics.machineIdFrom(message.topic, suffix: 'event');
+    if (eventId != null) {
+      final event = PanelTopics.parseMachineEvent(message.payload);
+      if (event != null) {
+        _telemetry.add(MachineEventReport(eventId,
+            on: event.on, cause: event.cause, by: event.by, src: event.src));
+      }
+      return;
+    }
+    final powerId = topics.machineIdFrom(message.topic, suffix: 'power');
+    if (powerId != null) {
+      final power = PanelTopics.parsePower(message.payload);
+      if (power != null) {
+        _telemetry.add(
+            MachinePowerReport(powerId, watts: power.watts, amps: power.amps));
+      }
+      return;
+    }
     final machineId = topics.machineIdFrom(message.topic, suffix: 'state');
     final isOn = PanelTopics.parseSwitch(message.payload);
     if (machineId != null && isOn != null) {
@@ -85,8 +180,14 @@ class MqttPanelLink extends PanelLink {
   Future<bool> sendCommand(String machineId, {required bool on}) async {
     if (_status != PanelLinkStatus.connected) return false;
     try {
+      final sender = _sender?.call();
       _transport.publish(
-          topics.command(machineId), on ? PanelTopics.on : PanelTopics.off);
+          topics.command(machineId),
+          PanelTopics.encodeCommand(
+              on: on,
+              issuedAt: _clock(),
+              by: sender?.by ?? '',
+              src: sender?.src ?? ''));
       return true;
     } catch (_) {
       return false;
@@ -121,6 +222,7 @@ class MqttPanelLink extends PanelLink {
     _connectionSub?.cancel();
     _transport.disconnect();
     _reports.close();
+    _telemetry.close();
     super.dispose();
   }
 }

@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../models/supply.dart';
+import 'panel_topics.dart';
+
 /// How the app is currently linked to the switch-panel hardware.
 enum PanelLinkStatus {
   /// No hardware: commands are applied locally (demo / development mode).
@@ -27,6 +30,125 @@ class MachineStateReport {
   final bool isOn;
 }
 
+/// A measurement sent by the panel's sensors.
+sealed class PanelTelemetry {
+  const PanelTelemetry();
+}
+
+/// What one machine is drawing right now. [amps] is the line current
+/// (per phase on a three-phase machine).
+@immutable
+class MachinePowerReport extends PanelTelemetry {
+  const MachinePowerReport(this.machineId,
+      {required this.watts, required this.amps});
+
+  final String machineId;
+  final double watts;
+  final double amps;
+}
+
+/// The panel's supply meter: total real power through the main incomer,
+/// and the meter's cumulative energy register.
+@immutable
+class MeterReport extends PanelTelemetry {
+  const MeterReport({required this.watts, required this.kwh, this.volts});
+
+  final double watts;
+  final double kwh;
+
+  /// Voltage of each incomer phase; null for a phase that didn't answer.
+  final List<double?>? volts;
+}
+
+/// Why a machine changed, from the panel. Delivered as telemetry so it
+/// flows with the panel's other reports; the activity log uses it.
+@immutable
+class MachineEventReport extends PanelTelemetry {
+  const MachineEventReport(
+    this.machineId, {
+    required this.on,
+    required this.cause,
+    this.by = '',
+    this.src = '',
+  });
+
+  final String machineId;
+  final bool on;
+  final MachineEventCause cause;
+
+  /// For commands: the operator's name and app install that sent it.
+  final String by;
+  final String src;
+}
+
+/// A machine's total running time, counted by the panel.
+@immutable
+class MachineHoursReport extends PanelTelemetry {
+  const MachineHoursReport(this.machineId, {required this.seconds});
+
+  final String machineId;
+  final int seconds;
+}
+
+/// The panel's supply protection state.
+@immutable
+class SupplyStatusReport extends PanelTelemetry {
+  const SupplyStatusReport({required this.state, this.since});
+
+  final SupplyState state;
+  final DateTime? since;
+}
+
+/// The panel's recent supply faults and power cuts.
+@immutable
+class SupplyEventsReport extends PanelTelemetry {
+  const SupplyEventsReport(this.events);
+
+  final List<SupplyEvent> events;
+}
+
+/// One day's energy through the supply meter, as totalled by the panel.
+/// The panel is always on, so this covers time the app was closed.
+@immutable
+class EnergyDayReport extends PanelTelemetry {
+  const EnergyDayReport({
+    required this.date,
+    required this.kwh,
+    required this.registerKwh,
+    required this.firstAt,
+    required this.lastAt,
+    this.gridHourlyKwh,
+    this.generatorKwh = 0,
+    this.generatorSeconds = 0,
+  });
+
+  /// Local calendar date, `YYYY-MM-DD`.
+  final String date;
+  final double kwh;
+
+  /// The meter register at [lastAt].
+  final double registerKwh;
+  final DateTime firstAt;
+  final DateTime lastAt;
+
+  /// Grid energy per local hour (24 values); null from a panel that
+  /// doesn't report it.
+  final List<double>? gridHourlyKwh;
+
+  /// Energy from the standby generator, and how long the panel ran on it.
+  final double generatorKwh;
+  final int generatorSeconds;
+}
+
+/// Whether the panel is supplied by the grid or the standby generator (from
+/// the changeover switch).
+@immutable
+class SupplySourceReport extends PanelTelemetry {
+  const SupplySourceReport({required this.onGenerator});
+
+  final bool onGenerator;
+}
+
 /// The connection between the app and the switch panel.
 ///
 /// Commands go out through [sendCommand]; the resulting machine state comes
@@ -43,6 +165,9 @@ abstract class PanelLink extends ChangeNotifier {
   String? get lastError;
 
   Stream<MachineStateReport> get stateReports;
+
+  /// Power and energy readings, if the panel has sensors fitted.
+  Stream<PanelTelemetry> get telemetry;
 
   bool get canSendCommands =>
       status == PanelLinkStatus.simulated ||
@@ -72,6 +197,10 @@ class SimulatedPanelLink extends PanelLink {
 
   @override
   Stream<MachineStateReport> get stateReports => _reports.stream;
+
+  /// No sensors in simulation: the app falls back to nameplate estimates.
+  @override
+  Stream<PanelTelemetry> get telemetry => const Stream.empty();
 
   @override
   Future<void> connect() async {}

@@ -143,6 +143,14 @@ class DeviceModel {
   /// Apparent power being drawn right now (0 if switched off).
   double get currentApparentPowerKva => isOn ? apparentPowerKva : 0;
 
+  /// Apparent power in kVA for a measured line current of [amps], at this
+  /// machine's supply voltage and phase.
+  double apparentPowerKvaAt(double amps) {
+    if (amps <= 0 || voltage <= 0) return 0;
+    final phaseFactor = phase == 'three' ? 1.732 : 1.0;
+    return phaseFactor * voltage * amps / 1000;
+  }
+
   /// Expected daily energy consumption in kWh over [hoursPerDay] of runtime.
   /// This is a planning estimate from the machine's schedule, so it does
   /// not depend on whether the machine happens to be on right now.

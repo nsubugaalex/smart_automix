@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'services/activity_log.dart';
 import 'services/alert_service.dart';
 import 'services/device_service.dart';
+import 'services/machine_health_service.dart';
+import 'services/maintenance_service.dart';
+import 'services/prepaid_service.dart';
+import 'services/operator_profile.dart';
 import 'services/panel_service.dart';
 import 'services/security_service.dart';
 import 'services/tariff_service.dart';
@@ -10,10 +15,13 @@ import 'widgets/custom/uganda_theme.dart';
 
 // Import screens
 import 'screens/main_shell.dart';
+import 'screens/notifications/activity_screen.dart';
 import 'screens/notifications/alerts_screen.dart';
 import 'screens/settings/network_screen.dart';
 import 'screens/settings/settings_screen.dart';
 import 'screens/devices/add_device_screen.dart';
+import 'screens/maintenance/maintenance_screen.dart';
+import 'screens/prepaid/prepaid_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,6 +33,14 @@ void main() async {
 }
 
 Future<void> _initializeServices() async {
+  // Who is using this phone (sent with commands for the activity log).
+  try {
+    await operatorProfile.init();
+  } catch (e, stackTrace) {
+    debugPrint('Operator profile initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
   // Load the switch-panel connection settings and start connecting in the
   // background (simulation mode unless an MQTT broker is configured).
   try {
@@ -60,12 +76,43 @@ Future<void> _initializeServices() async {
     debugPrint('Stack trace: $stackTrace');
   }
 
+  // Running hours and maintenance tasks, and prepaid credit (before
+  // alerts, which watch them).
+  try {
+    await prepaidService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Prepaid credit initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+  try {
+    await machineHealthService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Machine health initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+  try {
+    await maintenanceService.init();
+  } catch (e, stackTrace) {
+    debugPrint('Maintenance initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
   // Initialize alerts and check tariff health (stale rate, cost threshold)
   try {
     await alertService.init();
     await alertService.checkTariffHealth();
+    await alertService.checkMaintenance();
+    await alertService.checkPrepaid();
+    await alertService.checkMachineHealth();
   } catch (e, stackTrace) {
     debugPrint('Alert service initialization failed: $e');
+    debugPrint('Stack trace: $stackTrace');
+  }
+
+  try {
+    await activityLog.init();
+  } catch (e, stackTrace) {
+    debugPrint('Activity log initialization failed: $e');
     debugPrint('Stack trace: $stackTrace');
   }
 }
@@ -101,6 +148,12 @@ class MyApp extends StatelessWidget {
         return _createRoute(const MainShell());
       case '/alerts':
         return _createRoute(const AlertsScreen());
+      case '/activity':
+        return _createRoute(const ActivityScreen());
+      case '/maintenance':
+        return _createRoute(const MaintenanceScreen());
+      case '/prepaid':
+        return _createRoute(const PrepaidScreen());
       case '/settings':
         return _createRoute(const SettingsScreen());
       case '/network':

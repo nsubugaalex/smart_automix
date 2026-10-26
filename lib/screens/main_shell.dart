@@ -170,6 +170,30 @@ class _MainShellState extends State<MainShell> {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.account_balance_wallet_outlined),
+            title: const Text('Yaka credit'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/prepaid');
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.build_outlined),
+            title: const Text('Maintenance'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/maintenance');
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.history),
+            title: const Text('Activity'),
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushNamed(context, '/activity');
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.settings_outlined),
             title: const Text('Settings'),
             onTap: () {

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:smart_automix/models/supply.dart';
 import 'package:smart_automix/services/panel/mqtt_panel_link.dart';
 import 'package:smart_automix/services/panel/panel_link.dart';
 import 'package:smart_automix/services/panel/panel_topics.dart';
@@ -48,6 +49,97 @@ void main() {
       expect(() => PanelTopics('bad/id'), throwsArgumentError);
     });
 
+    test('builds the sensor topics', () {
+      expect(topics.power('7'), 'smartautomix/panel-test/machines/7/power');
+      expect(topics.meter, 'smartautomix/panel-test/meter');
+      expect(
+          topics.allMachinePower, 'smartautomix/panel-test/machines/+/power');
+    });
+
+    test('parses power and meter payloads, rejecting bad values', () {
+      expect(PanelTopics.parsePower('{"w": 7100, "a": 12.4}'),
+          (watts: 7100.0, amps: 12.4));
+      expect(PanelTopics.parseMeter('{"w": 0, "kwh": 48211.7}'),
+          (watts: 0.0, kwh: 48211.7));
+      for (final bad in [
+        '{"w": 7100}',
+        '{"w": -1, "a": 2}',
+        '{"w": "7100", "a": 2}',
+        '[1, 2]',
+        'ON',
+      ]) {
+        expect(PanelTopics.parsePower(bad), isNull, reason: bad);
+      }
+      expect(PanelTopics.parseMeter('{"w": 100}'), isNull);
+    });
+
+    test('encoded readings parse back', () {
+      final power = PanelTopics.encodePower(watts: 812.345, amps: 3.4567);
+      expect(PanelTopics.parsePower(power), (watts: 812.3, amps: 3.46));
+      final meter = PanelTopics.encodeMeter(watts: 950, kwh: 48210.12345);
+      expect(PanelTopics.parseMeter(meter), (watts: 950.0, kwh: 48210.123));
+    });
+
+    test('parses commands: JSON with a timestamp, or plain ON/OFF', () {
+      final sentAt = DateTime.utc(2026, 10, 22, 8);
+      final json = PanelTopics.parseCommand(
+          PanelTopics.encodeCommand(on: true, issuedAt: sentAt))!;
+      expect(json.on, isTrue);
+      expect(json.issuedAt, sentAt);
+
+      final plain = PanelTopics.parseCommand(' off ')!;
+      expect(plain.on, isFalse);
+      expect(plain.issuedAt, isNull);
+
+      expect(PanelTopics.parseCommand('{"cmd": "ON"}')!.issuedAt, isNull);
+      for (final bad in ['1', '{"cmd": 1}', '{"ts": 5}', '[]']) {
+        expect(PanelTopics.parseCommand(bad), isNull, reason: bad);
+      }
+    });
+
+    test('only a late or early timestamped ON is stale', () {
+      final sentAt = DateTime.utc(2026, 10, 22, 8);
+      const justOver = Duration(milliseconds: 1);
+      final late = sentAt.add(PanelCommand.maxAge + justOver);
+      final early = sentAt.subtract(PanelCommand.maxAge + justOver);
+
+      final on = PanelCommand(on: true, issuedAt: sentAt);
+      expect(on.isStaleAt(sentAt.add(PanelCommand.maxAge)), isFalse);
+      expect(on.isStaleAt(late), isTrue);
+      expect(on.isStaleAt(early), isTrue, reason: 'clocks too far apart');
+
+      expect(PanelCommand(on: false, issuedAt: sentAt).isStaleAt(late), isFalse,
+          reason: 'OFF always runs');
+      expect(const PanelCommand(on: true).isStaleAt(late), isFalse,
+          reason: 'no timestamp to check');
+    });
+
+    test('energy-day topics and payloads', () {
+      expect(topics.energyDay('2026-10-21'),
+          'smartautomix/panel-test/energy/2026-10-21');
+      expect(topics.allEnergyDays, 'smartautomix/panel-test/energy/+');
+      expect(
+          topics.energyDateFrom(topics.energyDay('2026-10-21')), '2026-10-21');
+      expect(topics.energyDateFrom(topics.energyDay('2026-13-45')), isNull);
+      expect(topics.energyDateFrom(topics.meter), isNull);
+
+      final first = DateTime(2026, 10, 21, 0, 0, 5);
+      final last = DateTime(2026, 10, 21, 23, 59, 55);
+      final day = PanelTopics.parseEnergyDay(PanelTopics.encodeEnergyDay(
+          kwh: 79.9123, registerKwh: 48131.6, firstAt: first, lastAt: last))!;
+      expect(day.kwh, 79.912);
+      expect(day.firstAt, first);
+      expect(day.lastAt, last);
+      for (final bad in [
+        '',
+        '{"kwh": 1, "reg": 2, "first": 10}',
+        '{"kwh": -1, "reg": 2, "first": 10, "last": 20}',
+        '{"kwh": 1, "reg": 2, "first": 20, "last": 10}',
+      ]) {
+        expect(PanelTopics.parseEnergyDay(bad), isNull, reason: bad);
+      }
+    });
+
     test('parses ON/OFF case-insensitively', () {
       expect(PanelTopics.parseSwitch('ON'), isTrue);
       expect(PanelTopics.parseSwitch(' off '), isFalse);
@@ -55,11 +147,17 @@ void main() {
     });
   });
 
-  test('connecting subscribes to panel status and machine states', () async {
+  test('connecting subscribes to panel status, states and sensors', () async {
     await link.connect();
     expect(link.status, PanelLinkStatus.connected);
-    expect(transport.subscriptions,
-        containsAll([topics.status, topics.allMachineStates]));
+    expect(
+        transport.subscriptions,
+        containsAll([
+          topics.status,
+          topics.allMachineStates,
+          topics.allMachinePower,
+          topics.meter,
+        ]));
     expect(link.panelOnline, isNull); // until the panel reports in
   });
 
@@ -71,14 +169,20 @@ void main() {
     expect(await link.sendCommand('1', on: true), isFalse);
   });
 
-  test('commands are published as ON/OFF on the machine command topic',
+  test('commands are published, timestamped, on the machine command topic',
       () async {
+    final sentAt = DateTime.utc(2026, 10, 22, 8);
+    link.dispose();
+    transport = FakeMqttTransport();
+    link = MqttPanelLink(
+        topics: topics, transport: transport, clock: () => sentAt);
     await link.connect();
     expect(await link.sendCommand('3', on: true), isTrue);
     expect(await link.sendCommand('3', on: false), isTrue);
+    final ms = sentAt.millisecondsSinceEpoch;
     expect(transport.published.map((m) => '${m.topic} ${m.payload}'), [
-      '${topics.command('3')} ON',
-      '${topics.command('3')} OFF',
+      '${topics.command('3')} {"cmd":"ON","ts":$ms}',
+      '${topics.command('3')} {"cmd":"OFF","ts":$ms}',
     ]);
   });
 
@@ -113,5 +217,63 @@ void main() {
 
     transport.setConnected(true);
     expect(link.status, PanelLinkStatus.connected);
+  });
+
+  test('power and meter messages become telemetry; bad ones are dropped',
+      () async {
+    await link.connect();
+    final readings = <String>[];
+    link.telemetry.listen((t) => readings.add(switch (t) {
+          MachinePowerReport() => '${t.machineId}:${t.watts}W/${t.amps}A',
+          MeterReport() => 'meter:${t.watts}W/${t.kwh}kWh',
+          EnergyDayReport() =>
+            'day:${t.date}:${t.kwh}kWh/gen ${t.generatorKwh}kWh/'
+                'h${t.gridHourlyKwh?.length}',
+          SupplySourceReport() => 'source:${t.onGenerator ? 'gen' : 'grid'}',
+          SupplyStatusReport() => 'supply:${t.state.wireName}',
+          SupplyEventsReport() => 'events:${t.events.length}',
+          MachineHoursReport() => 'hours:${t.machineId}:${t.seconds}',
+          MachineEventReport() =>
+            'event:${t.machineId}:${t.cause.wireName}:${t.by}',
+        }));
+
+    transport
+      ..deliver(topics.power('4'), '{"w": 6800, "a": 11.2}')
+      ..deliver(topics.power('5'), 'garbage')
+      ..deliver(topics.meter, '{"w": 9000, "kwh": 48211.5}')
+      ..deliver(
+          topics.energyDay('2026-10-21'),
+          PanelTopics.encodeEnergyDay(
+              kwh: 79.9,
+              registerKwh: 48131.6,
+              firstAt: DateTime(2026, 10, 21, 0, 0, 5),
+              lastAt: DateTime(2026, 10, 21, 23, 59, 55),
+              gridHourlyKwh: List.filled(24, 3),
+              generatorKwh: 7.9,
+              generatorSeconds: 5400))
+      ..deliver(topics.supply, '{"state": "phase_loss", "since": 1792616405}')
+      ..deliver(topics.supplyEvents,
+          '[{"kind": "undervoltage", "phase": 2, "from": 1792616405, "to": 0, "min": 183.2, "max": 231}, {"kind": "bogus"}]')
+      ..deliver(topics.event('4'),
+          '{"on": false, "cause": "trip", "by": "", "src": ""}')
+      ..deliver(topics.event('4'), '{"on": false, "cause": "magic"}')
+      ..deliver(topics.hours('4'), '{"s": 7200}')
+      ..deliver(topics.hours('4'), '{"s": -1}')
+      ..deliver(topics.source, 'generator')
+      ..deliver(topics.source, 'solar')
+      ..deliver(topics.energyDay('2026-10-20'), '') // deleted day
+      ..deliver('${topics.energyDay('')}not-a-date', '{"kwh": 1}');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(readings, [
+      '4:6800.0W/11.2A',
+      'meter:9000.0W/48211.5kWh',
+      'day:2026-10-21:79.9kWh/gen 7.9kWh/h24',
+      'supply:phase_loss',
+      'events:1',
+      'event:4:trip:',
+      'hours:4:7200',
+      'source:gen',
+    ]);
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/device_model.dart';
+import '../../models/machine_load.dart';
 import '../custom/uganda_theme.dart';
 
 /// A single machine/circuit tile with a remote on/off switch, used on the
@@ -8,12 +9,16 @@ class DeviceCard extends StatelessWidget {
   const DeviceCard({
     super.key,
     required this.device,
+    required this.load,
     required this.onToggle,
     this.onTap,
     this.pending = false,
   });
 
   final DeviceModel device;
+
+  /// What the machine is drawing, measured or estimated.
+  final MachineLoad load;
   final ValueChanged<bool> onToggle;
 
   /// A command was sent and the panel hasn't confirmed it yet.
@@ -22,7 +27,8 @@ class DeviceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final overloaded = device.isOn && device.isOverloaded;
+    final overloaded = load.exceedsBreaker;
+    final showAmps = load.isMeasured || device.isOn;
 
     return Card(
       color: overloaded
@@ -46,7 +52,8 @@ class DeviceCard extends StatelessWidget {
         ),
         subtitle: Text(
           '${device.location} • ${device.powerConsumption.toStringAsFixed(0)} W'
-          '${device.isOn ? ' • ${device.currentDrawAmps.toStringAsFixed(1)} A' : ''}',
+          '${showAmps ? ' • ${load.amps.toStringAsFixed(1)} A '
+              '${load.isMeasured ? 'live' : 'est.'}' : ''}',
           style: overloaded ? const TextStyle(color: UgandaTheme.danger) : null,
         ),
         trailing: pending

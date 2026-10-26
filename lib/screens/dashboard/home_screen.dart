@@ -3,6 +3,10 @@ import 'package:provider/provider.dart';
 import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/responsive_page.dart';
+import '../../widgets/common/supply_status.dart';
+import '../maintenance/maintenance_screen.dart';
+import '../prepaid/prepaid_screen.dart';
+import '../notifications/activity_screen.dart';
 import '../../widgets/custom/uganda_theme.dart';
 import 'control_actions.dart';
 
@@ -40,11 +44,16 @@ class DashboardBody extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  const SupplyBanner(padding: EdgeInsets.only(bottom: 16)),
+                  const PrepaidSummaryCard(),
+                  const MaintenanceDueCard(),
                   _buildWelcomeSection(context, deviceService),
                   const SizedBox(height: 24),
                   _buildQuickStats(context, deviceService),
                   const SizedBox(height: 24),
                   _buildActiveDevicesSection(context, deviceService),
+                  const SizedBox(height: 24),
+                  const RecentActivityCard(),
                   const SizedBox(height: 24),
                   Text(
                     'All Machines',
@@ -69,6 +78,7 @@ class DashboardBody extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: DeviceCard(
                     device: device,
+                    load: deviceService.loadOf(device),
                     pending: deviceService.isAwaitingConfirmation(device.id),
                     onToggle: (_) => toggleMachine(context, device),
                   ),
@@ -280,6 +290,7 @@ class DashboardBody extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: DeviceCard(
                       device: device,
+                      load: deviceService.loadOf(device),
                       pending: deviceService.isAwaitingConfirmation(device.id),
                       onToggle: (_) => toggleMachine(context, device),
                     ),

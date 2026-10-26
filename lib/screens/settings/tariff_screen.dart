@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../constants/uedcl_tariffs.dart';
 import '../../models/alert_model.dart';
+import '../../models/energy_prices.dart';
 import '../../services/alert_service.dart';
 import '../../services/tariff_service.dart';
 import '../../widgets/common/responsive_page.dart';
@@ -26,9 +27,34 @@ class _TariffBodyState extends State<TariffBody> {
   late final TextEditingController _fixedChargeController;
   late final TextEditingController _costAlertController;
 
+  // Time-of-use, from the bill (shoulder is the standard rate above).
+  late bool _touEnabled;
+  late final TextEditingController _peakRateController;
+  late final TextEditingController _offPeakRateController;
+  late int _peakStart, _peakEnd, _offPeakStart, _offPeakEnd;
+
+  // Standby generator fuel cost.
+  late final TextEditingController _fuelPriceController;
+  late final TextEditingController _litresPerKwhController;
+
   @override
   void initState() {
     super.initState();
+    final tou = tariffService.timeOfUse;
+    _touEnabled = tou.enabled;
+    _peakRateController =
+        TextEditingController(text: tou.peakRate.toStringAsFixed(0));
+    _offPeakRateController =
+        TextEditingController(text: tou.offPeakRate.toStringAsFixed(0));
+    _peakStart = tou.peakStart;
+    _peakEnd = tou.peakEnd;
+    _offPeakStart = tou.offPeakStart;
+    _offPeakEnd = tou.offPeakEnd;
+    final generator = tariffService.generator;
+    _fuelPriceController = TextEditingController(
+        text: generator.fuelPricePerLitre.toStringAsFixed(0));
+    _litresPerKwhController =
+        TextEditingController(text: '${generator.litresPerKwh}');
     _category = tariffService.category;
     _rateController = TextEditingController(
       text: tariffService.ratePerKwh.toStringAsFixed(0),
@@ -46,7 +72,65 @@ class _TariffBodyState extends State<TariffBody> {
     _rateController.dispose();
     _fixedChargeController.dispose();
     _costAlertController.dispose();
+    _peakRateController.dispose();
+    _offPeakRateController.dispose();
+    _fuelPriceController.dispose();
+    _litresPerKwhController.dispose();
     super.dispose();
+  }
+
+  String? _validatePositive(String? value) {
+    final number = _parse(value ?? '');
+    if (number == null) return 'Enter a number';
+    if (number <= 0) return 'Must be greater than 0';
+    return null;
+  }
+
+  TimeOfUse _timeOfUse() => TimeOfUse(
+        enabled: _touEnabled,
+        peakRate: _parse(_peakRateController.text) ?? 0,
+        offPeakRate: _parse(_offPeakRateController.text) ?? 0,
+        peakStart: _peakStart,
+        peakEnd: _peakEnd,
+        offPeakStart: _offPeakStart,
+        offPeakEnd: _offPeakEnd,
+      );
+
+  GeneratorCost _generatorCost() => GeneratorCost(
+        fuelPricePerLitre: _parse(_fuelPriceController.text)!,
+        litresPerKwh: _parse(_litresPerKwhController.text)!,
+      );
+
+  static String _hour(int h) => '${h.toString().padLeft(2, '0')}:00';
+
+  Widget _hourPicker(
+      String label, int value, bool isEnd, ValueChanged<int> onChanged) {
+    return DropdownButtonFormField<int>(
+      initialValue: value,
+      decoration:
+          InputDecoration(labelText: label, border: const OutlineInputBorder()),
+      items: [
+        for (var h = isEnd ? 1 : 0; h <= (isEnd ? 24 : 23); h++)
+          DropdownMenuItem(value: h, child: Text(_hour(h))),
+      ],
+      onChanged: (h) {
+        if (h != null) setState(() => onChanged(h));
+      },
+    );
+  }
+
+  Widget _window(String title, int start, int end, ValueChanged<int> onStart,
+      ValueChanged<int> onEnd) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        children: [
+          Expanded(child: _hourPicker('$title from', start, false, onStart)),
+          const SizedBox(width: 12),
+          Expanded(child: _hourPicker('to', end, true, onEnd)),
+        ],
+      ),
+    );
   }
 
   /// "today", "yesterday" or "N days ago".
@@ -84,6 +168,13 @@ class _TariffBodyState extends State<TariffBody> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
+    final timeOfUse = _timeOfUse();
+    final touProblem = _touEnabled ? timeOfUse.validate() : null;
+    if (touProblem != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(touProblem)));
+      return;
+    }
 
     final rate = _parse(_rateController.text)!;
     final tariffChanged =
@@ -95,6 +186,10 @@ class _TariffBodyState extends State<TariffBody> {
       monthlyFixedCharge: _parse(_fixedChargeController.text) ?? 0,
       dailyCostAlertThreshold: _parse(_costAlertController.text),
     );
+    if (timeOfUse.validate() == null) {
+      await tariffService.saveTimeOfUse(timeOfUse);
+    }
+    await tariffService.saveGenerator(_generatorCost());
 
     if (tariffChanged) {
       await alertService.add(
@@ -250,6 +345,121 @@ class _TariffBodyState extends State<TariffBody> {
                     border: OutlineInputBorder(),
                   ),
                 ),
+                const SizedBox(height: 24),
+                Text(
+                  'Time-of-use',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('My bill has peak and off-peak rates'),
+                  subtitle: const Text(
+                    'Prices energy by the hour it was used, and shows what '
+                    'running heavy work off-peak would save. The rate above '
+                    'is then the shoulder (standard) rate.',
+                  ),
+                  value: _touEnabled,
+                  onChanged: (on) => setState(() => _touEnabled = on),
+                ),
+                if (_touEnabled) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _peakRateController,
+                          validator: _validatePositive,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Peak rate (UGX/kWh)',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _offPeakRateController,
+                          validator: _validatePositive,
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Off-peak rate (UGX/kWh)',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  _window('Peak', _peakStart, _peakEnd, (h) => _peakStart = h,
+                      (h) => _peakEnd = h),
+                  _window('Off-peak', _offPeakStart, _offPeakEnd,
+                      (h) => _offPeakStart = h, (h) => _offPeakEnd = h),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Hours not in either window are shoulder. The defaults '
+                    'are ERA\'s periods for industrial customers; check them '
+                    'and the rates against your bill.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+                const SizedBox(height: 24),
+                Text(
+                  'Standby generator',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _fuelPriceController,
+                        validator: _validatePositive,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Fuel price (UGX/litre)',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _litresPerKwhController,
+                        validator: _validatePositive,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Litres per kWh',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Builder(builder: (context) {
+                  final price = _parse(_fuelPriceController.text);
+                  final litres = _parse(_litresPerKwhController.text);
+                  final perKwh =
+                      price != null && litres != null ? price * litres : null;
+                  return Text(
+                    '${perKwh == null ? '' : 'About ${UgandaTheme.formatUgx(perKwh)} per kWh from the generator. '}'
+                    'To measure litres per kWh: fill the tank, note the '
+                    'generator kWh on the Energy tab, refill, and divide the '
+                    'litres by the kWh used. A lightly loaded generator uses '
+                    'more fuel per kWh.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  );
+                }),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: _save,

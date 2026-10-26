@@ -4,16 +4,24 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/alert_model.dart';
+import '../models/machine_health.dart';
+import '../models/maintenance.dart';
+import '../models/supply.dart';
 import '../widgets/custom/uganda_theme.dart';
 import 'device_service.dart';
+import 'machine_health_service.dart';
+import 'maintenance_service.dart';
+import 'prepaid_service.dart';
+import 'power_monitor.dart';
 import 'panel/panel_link.dart';
 import 'panel/panel_settings.dart';
 import 'panel_service.dart';
 import 'tariff_service.dart';
 
-/// Notification centre for the app — currently used to keep the operator
-/// informed about the UEDCL tariff: a stale rate, a confirmed rate change,
-/// or the estimated daily cost crossing a threshold they set.
+/// Notification centre for the app: the UEDCL tariff (a stale rate, a
+/// confirmed rate change, or the estimated daily cost crossing a threshold
+/// they set), the switch-panel link, and machines measured drawing more
+/// current than their breaker allows.
 ///
 /// On Android/iOS/macOS this also raises a system notification via
 /// flutter_local_notifications. System notifications are skipped on web
@@ -21,13 +29,32 @@ import 'tariff_service.dart';
 /// notification settings configured; the alert still lands in the in-app
 /// Alerts screen everywhere.
 class AlertService extends ChangeNotifier {
-  AlertService(this._devices, this._tariff, {PanelService? panel})
-      : _panel = panel;
+  AlertService(this._devices, this._tariff,
+      {PanelService? panel,
+      MaintenanceService? maintenance,
+      PrepaidService? prepaid,
+      MachineHealthService? health})
+      : _panel = panel,
+        _maintenance = maintenance,
+        _prepaid = prepaid,
+        _health = health;
 
   final DeviceService _devices;
   final TariffService _tariff;
   final PanelService? _panel;
+  final MaintenanceService? _maintenance;
+  final PrepaidService? _prepaid;
+  final MachineHealthService? _health;
   StreamSubscription<CommandFailure>? _failuresSub;
+  StreamSubscription<SupplyEventChange>? _supplySub;
+
+  /// Supply events older than this when the app first hears of them (the
+  /// panel keeps its last 16) are recorded without an alert.
+  static const supplyAlertWindow = Duration(hours: 24);
+
+  // Machines currently measured over their breaker rating, so each
+  // overcurrent raises one alert rather than one per reading.
+  final Set<String> _overcurrent = {};
 
   static const _storageKey = 'alerts';
 
@@ -82,8 +109,13 @@ class AlertService extends ChangeNotifier {
     // Keep tariff-related alerts current as machines are toggled/added or
     // the tariff is edited, not just when the Tariff screen is saved.
     _devices.addListener(_recheckTariffHealth);
+    _devices.addListener(checkLoadHealth);
     _tariff.addListener(_recheckTariffHealth);
     _panel?.addListener(_recheckPanelHealth);
+    _maintenance?.addListener(_recheckMaintenance);
+    _prepaid?.addListener(_recheckPrepaid);
+    _health?.addListener(_recheckHealth);
+    _supplySub ??= _devices.supplyEventChanges.listen(onSupplyEvent);
     _failuresSub ??= _devices.commandFailures.listen(
       (failure) => add(
         title: 'Command not confirmed: ${failure.machineName}',
@@ -210,9 +242,14 @@ class AlertService extends ChangeNotifier {
   @override
   void dispose() {
     _devices.removeListener(_recheckTariffHealth);
+    _devices.removeListener(checkLoadHealth);
     _tariff.removeListener(_recheckTariffHealth);
     _panel?.removeListener(_recheckPanelHealth);
+    _maintenance?.removeListener(_recheckMaintenance);
+    _prepaid?.removeListener(_recheckPrepaid);
+    _health?.removeListener(_recheckHealth);
     _failuresSub?.cancel();
+    _supplySub?.cancel();
     super.dispose();
   }
 
@@ -251,6 +288,174 @@ class AlertService extends ChangeNotifier {
       );
     } else {
       await resolve('tariff-cost-threshold');
+    }
+  }
+
+  /// Alert on supply faults and power cuts: critical while one is going
+  /// on, and a note when it ends (machines stay off until restarted).
+  @visibleForTesting
+  void onSupplyEvent(SupplyEventChange change) {
+    final e = change.event;
+    final duration = e.duration;
+    final lasted = duration == null ? '' : ', for ${formatDuration(duration)}';
+    if (change.isNew && e.isOngoing) {
+      unawaited(add(
+        title: 'Supply fault: ${e.kind.label}',
+        message: '${e.summary}. The panel switched all machines off and '
+            'won\'t start any until the supply has been steady for a while.',
+        severity: AlertSeverity.critical,
+      ));
+    } else if (change.isNew) {
+      final at = e.to ?? e.from;
+      if (at == null || DateTime.now().difference(at) > supplyAlertWindow) {
+        return; // old history from the panel's log
+      }
+      unawaited(add(
+        title: '${e.kind.label} while the app was closed',
+        message: '${e.summary}$lasted. Machines stayed off afterwards; '
+            'restart them when you are ready.',
+        severity: AlertSeverity.warning,
+      ));
+    } else {
+      unawaited(add(
+        title: 'Supply back to normal',
+        message: '${e.summary}$lasted. Machines stay off until you restart '
+            'them; the panel allows starts once the supply is steady.',
+        severity: AlertSeverity.info,
+      ));
+    }
+  }
+
+  /// Raise an alert when the panel measures a machine drawing more current
+  /// than its breaker allows: a jammed or overloaded motor, or a fault.
+  /// One alert per occurrence; it stays in the list after the load drops so
+  /// the operator can see it happened.
+  void checkLoadHealth() {
+    final over = _devices.getMeasuredOvercurrentDevices();
+    final overIds = over.map((d) => d.id).toSet();
+    for (final device in over) {
+      if (_overcurrent.contains(device.id)) continue;
+      final load = _devices.loadOf(device);
+      unawaited(add(
+        title: 'Overcurrent: ${device.name}',
+        message: '${device.name} is drawing '
+            '${load.amps.toStringAsFixed(1)} A on a '
+            '${device.breakerRatingAmps!.toStringAsFixed(0)} A breaker. '
+            'Check it for a jam or fault before the breaker trips.',
+        severity: AlertSeverity.critical,
+      ));
+    }
+    _overcurrent
+      ..clear()
+      ..addAll(overIds);
+  }
+
+  void _recheckHealth() {
+    unawaited(checkMachineHealth());
+  }
+
+  static const _healthPrefix = 'health-';
+
+  /// One alert per machine whose running current has drifted from its
+  /// normal, cleared once it's back (or relearned). Worded with the usual
+  /// current rounded, so it isn't re-notified as the figures move a little.
+  Future<void> checkMachineHealth() async {
+    final health = _health;
+    if (health == null) return;
+    final flagged = <String>{};
+    for (final d in _devices.devices) {
+      final s = health.statusOf(d.id);
+      final kind = s.finding;
+      if (kind == null) continue;
+      final id = '$_healthPrefix${d.id}';
+      flagged.add(id);
+      final what = switch (kind) {
+        HealthKind.high => 'drawing more current than usual',
+        HealthKind.low => 'drawing less current than usual',
+        HealthKind.erratic => 'drawing a much more uneven current than usual',
+      };
+      await upsert(
+        id: id,
+        title: 'Unusual running: ${d.name}',
+        message: '${d.name} has been $what for several days of running '
+            '(usually about ${s.usual!.round()} A). Worth checking for '
+            '${MachineHealthAnalysis.causes(kind, d.type)}.',
+        severity: AlertSeverity.warning,
+      );
+    }
+    final stale = _alerts
+        .where((a) => a.id.startsWith(_healthPrefix) && !flagged.contains(a.id))
+        .map((a) => a.id)
+        .toList();
+    for (final id in stale) {
+      await resolve(id);
+    }
+  }
+
+  void _recheckPrepaid() {
+    unawaited(checkPrepaid());
+  }
+
+  /// One alert while prepaid credit is low; cleared once a token is added
+  /// or a reading shows enough. Worded without the exact figure so it
+  /// isn't re-notified as the balance ticks down.
+  Future<void> checkPrepaid() async {
+    final prepaid = _prepaid;
+    if (prepaid == null) return;
+    const id = 'prepaid-low';
+    if (!prepaid.isLow) {
+      await resolve(id);
+      return;
+    }
+    final out = (prepaid.balance?.units ?? 1) <= 0;
+    await upsert(
+      id: id,
+      title: out ? 'Yaka credit may have run out' : 'Yaka credit running low',
+      message: out
+          ? 'The estimate has reached zero. Check the meter and buy a token '
+              'so the power doesn\'t go off mid-job.'
+          : 'Less than ${prepaid.warnDays} day${prepaid.warnDays == 1 ? '' : 's'} '
+              'of credit left at your usual use. Buy a token so the power '
+              'doesn\'t go off mid-job.',
+      severity: AlertSeverity.warning,
+    );
+  }
+
+  void _recheckMaintenance() {
+    unawaited(checkMaintenance());
+  }
+
+  static const _maintenancePrefix = 'maint-';
+
+  /// One alert per maintenance task that is due, cleared once it's marked
+  /// done (or deleted). The wording doesn't change as hours pass, so the
+  /// phone isn't notified again on every tick.
+  Future<void> checkMaintenance() async {
+    final maintenance = _maintenance;
+    if (maintenance == null) return;
+    final due = {
+      for (final t in maintenance.dueTasks) '$_maintenancePrefix${t.id}': t
+    };
+    for (final entry in due.entries) {
+      final t = entry.value;
+      final machine = t.machineId == MaintenanceTask.generatorId
+          ? 'Standby generator'
+          : _devices.getDeviceById(t.machineId)?.name ?? 'A machine';
+      await upsert(
+        id: entry.key,
+        title: 'Maintenance due: $machine',
+        message: '${t.title} (${t.intervalText}). Mark it done on the '
+            'Maintenance screen once it has been done.',
+        severity: AlertSeverity.warning,
+      );
+    }
+    final stale = _alerts
+        .where((a) =>
+            a.id.startsWith(_maintenancePrefix) && !due.containsKey(a.id))
+        .map((a) => a.id)
+        .toList();
+    for (final id in stale) {
+      await resolve(id);
     }
   }
 
@@ -312,5 +517,8 @@ class AlertService extends ChangeNotifier {
   }
 }
 
-final alertService =
-    AlertService(deviceService, tariffService, panel: panelService);
+final alertService = AlertService(deviceService, tariffService,
+    panel: panelService,
+    maintenance: maintenanceService,
+    prepaid: prepaidService,
+    health: machineHealthService);

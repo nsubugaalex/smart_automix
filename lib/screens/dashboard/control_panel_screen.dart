@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../services/device_service.dart';
 import '../../widgets/common/device_card.dart';
 import '../../widgets/common/panel_status.dart';
+import '../../widgets/common/supply_status.dart';
 import '../../widgets/common/responsive_page.dart';
 import '../../widgets/custom/uganda_theme.dart';
 import 'control_actions.dart';
@@ -27,6 +28,9 @@ class ControlPanelBody extends StatelessWidget {
               PanelStatusBanner(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                 onOpenSettings: () => Navigator.pushNamed(context, '/network'),
+              ),
+              const SupplyBanner(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 0),
               ),
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -108,6 +112,7 @@ class ControlPanelBody extends StatelessWidget {
                             padding: const EdgeInsets.only(bottom: 8),
                             child: DeviceCard(
                               device: device,
+                              load: deviceService.loadOf(device),
                               pending: deviceService
                                   .isAwaitingConfirmation(device.id),
                               onToggle: (_) => toggleMachine(context, device),

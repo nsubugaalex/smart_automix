@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'network_screen.dart';
+import 'panel_setup_screen.dart';
 import 'security_screen.dart';
 import 'profile_screen.dart';
 
@@ -22,6 +23,15 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           ListTile(
+            leading: const Icon(Icons.developer_board),
+            title: const Text('Panel setup'),
+            subtitle: const Text('Wiring and firmware configuration'),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute<void>(builder: (_) => const PanelSetupScreen()),
+            ),
+          ),
+          ListTile(
             leading: const Icon(Icons.security),
             title: const Text('Security'),
             subtitle: const Text('PIN, access control'),
@@ -33,6 +43,7 @@ class SettingsScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.person),
             title: const Text('Profile'),
+            subtitle: const Text('Your name in the activity log'),
             onTap: () => Navigator.push(
               context,
               MaterialPageRoute<void>(builder: (_) => const ProfileScreen()),
