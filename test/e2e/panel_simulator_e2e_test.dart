@@ -276,5 +276,12 @@ void _endToEnd() {
     simulator!.kill(ProcessSignal.sigint);
     await eventually(() => panel!.panelOnline == false, 'panel offline');
     expect(panel!.isLive, isFalse);
-  }, skip: Platform.isWindows ? 'no SIGINT for child processes' : false);
+    // A test's own `skip` overrides its group's, so this one must also skip
+    // without a broker (as the whole group does).
+  },
+      skip: _host == null
+          ? 'set MQTT_E2E_HOST to run'
+          : Platform.isWindows
+              ? 'no SIGINT for child processes'
+              : false);
 }
